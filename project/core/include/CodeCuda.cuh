@@ -6,13 +6,14 @@
 #ifndef CODECUDA_CUH
 #define CODECUDA_CUH
 
-#include "iostream"
 #include "vector"
 namespace CodeCuda
 {
-    void init();
-    void matmul(const int M, const int P, const int N, const std::vector<float>& a, const std::vector<float>& b, std::vector<float>& cOut);
-    void shutdown();
+    void C_Init();
+    void C_Matmul(const int M, const int K, const int N, const std::vector<float>& a, const std::vector<float>& b, std::vector<float>& cOut);
+    void C_Shutdown();
+    void C_MatmulTest(const int M, const int K, const int N, const std::vector<float>& a, const std::vector<float>& b, std::vector<float>& cOut);
+    
 }
 
 #endif // CODECUDA_CUH

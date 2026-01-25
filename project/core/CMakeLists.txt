@@ -1,5 +1,7 @@
 ﻿add_library(codeCudaLib src/CodeCuda.cu)
 
+find_package(CUDAToolkit REQUIRED)
+
 target_include_directories(codeCudaLib 
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -13,3 +15,11 @@ set_target_properties(codeCudaLib PROPERTIES
 target_compile_options(codeCudaLib PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>
 )
+
+target_link_libraries(codeCudaLib
+        PRIVATE
+        CUDA::cudart
+        CUDA::cublas
+)
+
+

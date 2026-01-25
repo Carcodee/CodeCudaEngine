@@ -3,19 +3,41 @@
 //
 
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include "CodeCuda.cuh"
 int main()
 {
-    CodeCuda::init();
-    std::vector<float> a = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-    std::vector<float> b = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
-    std::vector<float> c = {};
-    CodeCuda::matmul(2, 3, 4, a, b, c);
+    CodeCuda::C_Init();
+//(6 ,8)
+    std::vector<float> a = {2, 2, 2, 2, 2, 2, 2, 2, 
+                            2, 2, 2, 2, 2, 2, 2, 2,
+                            2, 2, 2, 2, 2, 2, 2, 2,
+                            2, 2, 2, 2, 2, 2, 2, 2,
+                            2, 2, 2, 2, 2, 2, 2, 2,
+                            2, 2, 2, 2, 2, 2, 2, 2};
 
+//(8 ,4)
+    std::vector<float> b = {1, 1, 1, 1,
+                            1, 1, 1, 1,
+                            1, 1, 1, 1,
+                            1, 1, 1, 1,
+                            1, 1, 1, 1,
+                            1, 1, 1, 1,
+                            1, 1, 1, 1,
+                            1, 1, 1, 1};
+    std::vector<float> c = {};
+    CodeCuda::C_MatmulTest(6, 4, 8, a, b, c);
+
+    
     for (int i = 0; i < c.size(); ++i)
     {
-        std::cout<< c[i];
+        if ((i) % 4 == 0)
+        {
+            std::cout << "\n";
+        }
+        std::string text = std::to_string(c[i]) + " ";
+        std::cout<< text;
     }
 }
