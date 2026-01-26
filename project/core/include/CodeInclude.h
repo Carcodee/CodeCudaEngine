@@ -6,6 +6,8 @@
 #ifndef CODEINCLUDE_H
 #define CODEINCLUDE_H
 
+#include "assert.h"
+#include "string";
 #include "CodeStructs.cuh"
 #include "CodeCuda.cuh"
 

@@ -2,42 +2,23 @@
 // Created by carlo on 2026-01-17.
 //
 
-#include <iostream>
-#include <string>
-#include <vector>
-
-#include "CodeCuda.cuh"
+#include "CodeInclude.h"
 int main()
 {
     CodeCuda::C_Init();
-//(6 ,8)
-    std::vector<float> a = {2, 2, 2, 2, 2, 2, 2, 2, 
-                            2, 2, 2, 2, 2, 2, 2, 2,
-                            2, 2, 2, 2, 2, 2, 2, 2,
-                            2, 2, 2, 2, 2, 2, 2, 2,
-                            2, 2, 2, 2, 2, 2, 2, 2,
-                            2, 2, 2, 2, 2, 2, 2, 2};
+    CodeCuda::c_matrix h_a (6, 4);
+    CodeCuda::c_matrix h_b (4, 6);
+    CodeCuda::c_matrix h_c (h_a.Shape()[0], h_b.Shape()[1]);
 
-//(8 ,4)
-    std::vector<float> b = {1, 1, 1, 1,
-                            1, 1, 1, 1,
-                            1, 1, 1, 1,
-                            1, 1, 1, 1,
-                            1, 1, 1, 1,
-                            1, 1, 1, 1,
-                            1, 1, 1, 1,
-                            1, 1, 1, 1};
-    std::vector<float> c = {};
-    CodeCuda::C_MatmulTest(6, 4, 8, a, b, c);
+    h_a.Full(1.0f);
+    h_b.Full(2.0f);
+    h_c.Full(0.0f);
+    
+    CodeCuda::C_MatmulTest(h_a.Shape()[0], h_b.Shape()[1], h_a.Shape()[1], h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data(), 5);
+
+    h_a.Print();
+    h_b.Print();
+    h_c.Print();
 
     
-    for (int i = 0; i < c.size(); ++i)
-    {
-        if ((i) % 4 == 0)
-        {
-            std::cout << "\n";
-        }
-        std::string text = std::to_string(c[i]) + " ";
-        std::cout<< text;
-    }
 }

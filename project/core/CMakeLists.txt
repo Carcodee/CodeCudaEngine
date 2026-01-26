@@ -1,4 +1,5 @@
-﻿add_library(codeCudaLib src/CodeCuda.cu)
+﻿add_library(codeCudaLib 
+        src/CodeCuda.cu)
 
 find_package(CUDAToolkit REQUIRED)
 

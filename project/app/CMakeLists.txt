@@ -7,4 +7,4 @@ target_link_libraries(lib_test
             codeCudaLib
 )
 
-target_compile_features(lib_test PRIVATE cxx_std_17)
+target_compile_features(lib_test PRIVATE cxx_std_20)
