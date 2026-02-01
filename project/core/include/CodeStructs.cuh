@@ -28,6 +28,14 @@ namespace CodeCuda{
             return *this;
         }
         
+        c_matrix& Rand(){
+            srand(40);
+            for(int32_t i = 0; i < this->data_size; i++){
+                data[i] = rand() % 1000;
+            }
+            return *this;
+        }
+        
         c_matrix& Arange_Sequential(){
             for(int32_t i = 0; i < this->data_size; i++){
                 data[i] = i;

@@ -51,11 +51,18 @@ namespace CodeKernels
         c[y * K + x] = alpha * acc + 1.0f * beta;
     }
     
-    __global__ void k_check_mat_err(const float *a, const float *b, const float *c)
+    __global__ void k_check_mat_err(const int M, const int K, const float *a, const float *b, float *c)
     {
-        uint32_t x_global = ((blockDim.x * blockIdx.x) + threadIdx.x);
         uint32_t y_global = ((blockDim.y * blockIdx.y) + threadIdx.y);
+        uint32_t x_global = ((blockDim.x * blockIdx.x) + threadIdx.x);
+        auto y = static_cast<uint32_t>(x_global / K);
         
+        if (y > M)
+        {
+            return;
+        }
+        uint32_t x = x_global % K;
+        c[y * K + x] = abs(a[y * K + x] - b[y * K + x]);
     }
 } // namespace CodeKernels
 
@@ -187,6 +194,14 @@ namespace CodeCuda
         printf("GFLOPS/s personal: %f\n", gflops);
 
         // cubulas
+        float *d_A_cublas, *d_B_cublas, *d_C_cublas;
+        Wrappers::C_Malloc(&d_A_cublas, M * N * sizeof(float));
+        Wrappers::C_Malloc(&d_B_cublas, N * K * sizeof(float));
+        Wrappers::C_Malloc(&d_C_cublas, M * K * sizeof(float));
+
+        Wrappers::C_Memcpy(d_A_cublas, a, M * N * sizeof(float), cudaMemcpyHostToDevice);
+        Wrappers::C_Memcpy(d_B_cublas, b, N * K * sizeof(float), cudaMemcpyHostToDevice);
+        
         float alpha = 1.0f;
         float beta = 0.0f;
         cublasHandle_t handle;
@@ -200,13 +215,13 @@ namespace CodeCuda
         for (int i = 0; i < 5; ++i)
         {
             CUBLAS_CHECK(
-                cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, K, M, N, &alpha, d_B, K, d_A, N, &beta, d_C, K));
+                cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, K, M, N, &alpha, d_B_cublas, K, d_A_cublas, N, &beta, d_C_cublas, K));
         }
         Wrappers::C_EventRecord(start_cublas);
         for (int i = 0; i < runs; ++i)
         {
             CUBLAS_CHECK(
-                cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, K, M, N, &alpha, d_B, K, d_A, N, &beta, d_C, K));
+                cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, K, M, N, &alpha, d_B_cublas, K, d_A_cublas, N, &beta, d_C_cublas, K));
         }
         Wrappers::C_EventRecord(stop_cublas);
         Wrappers::C_EventSynchronize(stop_cublas);
@@ -217,14 +232,47 @@ namespace CodeCuda
         gflops = double((flops) * 1.0e-9f) / double(ms_real_cublas / 1000.0f);
         printf("GFLOPS/s cublas: %f\n", gflops);
 
-        Wrappers::C_Memcpy(cOut, d_C, M * K * sizeof(float), cudaMemcpyDeviceToHost);
+
+        float *d_C_err;
+        Wrappers::C_Malloc(&d_C_err, M * K * sizeof(float));
+        
+        dim3 block_err(128, 1, 1);
+        dim3 grid_err(int((M * K) / 128) + 1, 1, 1);
+        CodeKernels::k_check_mat_err<<<grid_err, block_err>>>(M, K,d_C, d_C_cublas, d_C_err);
+        
+        float *errMatrix;
+        errMatrix = new float[M * K];
+        Wrappers::C_Memcpy(errMatrix, d_C_err, M * K * sizeof(float), cudaMemcpyDeviceToHost);
+
+        float err_average = 0;
+        float max_error = 0;
+        for (int i = 0; i < M * K; ++i)
+        {
+            err_average+= errMatrix[i];
+            max_error = max(max_error, errMatrix[i]);
+        }
+        err_average /= float(M * K);
+        printf("----- Matmul err compare -----\n");
+        printf("Average error: %f\n", err_average);
+        printf("Max error: %f\n", max_error);
+        
+        //output
+        
+        Wrappers::C_Memcpy(cOut, d_C_cublas, M * K * sizeof(float), cudaMemcpyDeviceToHost);
 
         Wrappers::C_Free(d_A);
         Wrappers::C_Free(d_B);
         Wrappers::C_Free(d_C);
+        Wrappers::C_Free(d_A_cublas);
+        Wrappers::C_Free(d_B_cublas);
+        Wrappers::C_Free(d_C_cublas);
+        Wrappers::C_Free(d_C_err);
         Wrappers::C_EventDestroy(start);
         Wrappers::C_EventDestroy(stop);
+        Wrappers::C_EventDestroy(start_cublas);
+        Wrappers::C_EventDestroy(stop_cublas);
         CUBLAS_CHECK(cublasDestroy_v2(handle));
+        delete [] errMatrix;
     }
 
     void C_Shutdown() {}
