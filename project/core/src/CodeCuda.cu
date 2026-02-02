@@ -10,9 +10,10 @@
 #include "cublas.h"
 #include "cuda_runtime.h"
 
+
 namespace CodeKernels
 {
-    __global__ void k_matmul(const int M, const int K, const int N,float alpha, float beta, const float *a, const float *b, float *c)
+    __global__ void k_matmul(const int M, const int N, const int K,float alpha, float beta, const float *a, const float *b, float *c)
     {
         uint32_t x_global = ((blockDim.x * blockIdx.x) + threadIdx.x);
         auto y = static_cast<uint32_t>(x_global / K);
@@ -31,24 +32,23 @@ namespace CodeKernels
         c[y * K + x] = alpha * acc + 1.0f * beta;
     }
 
-    __global__ void k_matmul_naive(const int M, const int K, const int N, float alpha, float beta, const float *a, const float *b, float *c)
+    __global__ void k_matmul_naive(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
     {
-        uint32_t x_global = ((blockDim.x * blockIdx.x) + threadIdx.x);
-        //        printf("%d\n", x);
-        auto y = static_cast<uint32_t>(x_global / K);
-        if (y > M)
+        uint32_t x = ((blockDim.x * blockIdx.x) + threadIdx.x);
+        uint32_t y = ((blockDim.y * blockIdx.y) + threadIdx.y);
+        if (y > M || x > K)
         {
             return;
         }
-        uint32_t x = x_global % K;
         float acc = 0;
         for (int i = 0; i < N; ++i)
         {
-            acc +=  a[N * y + i] * b[K * i + x];
+            acc += a[N * y + i] * b[K * i + x];
         }
 
         //1 should be C
-        c[y * K + x] = alpha * acc + 1.0f * beta;
+//        c[y * K + x] = alpha * acc + 1.0f * beta;
+        c[y * K + x] = acc;
     }
     
     __global__ void k_check_mat_err(const int M, const int K, const float *a, const float *b, float *c)
@@ -121,11 +121,15 @@ namespace CodeCuda
     } // namespace Wrappers
 
 
-    void C_Init() { std::cout << "Hello from cuda lib\n"; }
-
-    void C_Matmul(const int M, const int K, const int N, const float *a, const float *b, float *cOut)
+    void C_Init()
     {
-        if (cOut == nullptr)
+        cublasInit();
+        std::cout << "Hello from cuda lib\n";
+    }
+
+    void C_Matmul(const int M, const int N, const int K, const float *a, const float *b, float *c)
+    {
+        if (c == nullptr)
         {
             std::cout << "target buffer is empty\n";
             return;
@@ -140,19 +144,19 @@ namespace CodeCuda
 
         dim3 block(32, 1, 1);
         dim3 grid(int((M * K) / 32) + 1, 1, 1);
-        CodeKernels::k_matmul<<<grid, block>>>(M, K, N, 1.0f, 0.0f,d_A, d_B, d_C);
+        CodeKernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f,d_A, d_B, d_C);
         Wrappers::C_DeviceSynchronize();
 
-        Wrappers::C_Memcpy(cOut, d_C, M * K * sizeof(float), cudaMemcpyDeviceToHost);
+        Wrappers::C_Memcpy(c, d_C, M * K * sizeof(float), cudaMemcpyDeviceToHost);
 
         Wrappers::C_Free(d_A);
         Wrappers::C_Free(d_B);
         Wrappers::C_Free(d_C);
     }
 
-    void C_MatmulTest(const int M, const int K, const int N, const float *a, const float *b, float *cOut, int runs)
+    void C_Matmul_Test(const int M, const int N, const int K, const float *a, const float *b, float *c, int runs)
     {
-        if (cOut == nullptr)
+        if (c == nullptr)
         {
             std::cout << "target buffer is empty\n";
             return;
@@ -168,19 +172,19 @@ namespace CodeCuda
         cudaEvent_t start, stop;
         Wrappers::C_EventCreate(&start);
         Wrappers::C_EventCreate(&stop);
-        dim3 block(128, 1, 1);
-        dim3 grid(int((M * K) / 128) + 1, 1, 1);
+        dim3 block(32, 32, 1);
+        dim3 grid((K/32) + 1, (M/32) + 1, 1);
         // warmup
-        for (int i = 0; i < 2; ++i)
+        for (int i = 0; i < 5; ++i)
         {
-            CodeKernels::k_matmul<<<grid, block>>>(M, K, N, 1.0f, 0.0f, d_A, d_B, d_C);
+            CodeKernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }
         Wrappers::C_DeviceSynchronize();
 
         Wrappers::C_EventRecord(start);
         for (int i = 0; i < runs; ++i)
         {
-            CodeKernels::k_matmul<<<grid, block>>>(M, K, N, 1.0f, 0.0f, d_A, d_B, d_C);
+            CodeKernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }
         Wrappers::C_EventRecord(stop);
         Wrappers::C_EventSynchronize(stop);
@@ -214,14 +218,12 @@ namespace CodeCuda
         //warmp
         for (int i = 0; i < 5; ++i)
         {
-            CUBLAS_CHECK(
-                cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, K, M, N, &alpha, d_B_cublas, K, d_A_cublas, N, &beta, d_C_cublas, K));
+            cublasSgemm('T', 'T', K, N, M, alpha, d_B_cublas, N, d_A_cublas, M, beta, d_C_cublas, M);
         }
         Wrappers::C_EventRecord(start_cublas);
         for (int i = 0; i < runs; ++i)
         {
-            CUBLAS_CHECK(
-                cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, K, M, N, &alpha, d_B_cublas, K, d_A_cublas, N, &beta, d_C_cublas, K));
+            cublasSgemm('T', 'T', K, N, M, alpha, d_B_cublas, N, d_A_cublas, M, beta, d_C_cublas, M);
         }
         Wrappers::C_EventRecord(stop_cublas);
         Wrappers::C_EventSynchronize(stop_cublas);
@@ -258,7 +260,7 @@ namespace CodeCuda
         
         //output
         
-        Wrappers::C_Memcpy(cOut, d_C_cublas, M * K * sizeof(float), cudaMemcpyDeviceToHost);
+        Wrappers::C_Memcpy(c, d_C, M * K * sizeof(float), cudaMemcpyDeviceToHost);
 
         Wrappers::C_Free(d_A);
         Wrappers::C_Free(d_B);
@@ -275,7 +277,10 @@ namespace CodeCuda
         delete [] errMatrix;
     }
 
-    void C_Shutdown() {}
+    void C_Shutdown()
+    {
+        cublasShutdown();
+    }
 
 } // namespace CodeCuda
 

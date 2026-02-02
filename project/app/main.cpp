@@ -7,20 +7,23 @@
 
 void TestLib(int M, int N, int K, int runs)
 {
-    CodeCuda::C_Init();
     CodeCuda::c_matrix h_a (M, N);
-    CodeCuda::c_matrix h_b (M, K);
-    CodeCuda::c_matrix h_c (h_a.Shape()[0], h_b.Shape()[1]);
+    CodeCuda::c_matrix h_b (N, K);
+    CodeCuda::c_matrix h_c (M, K);
 
     h_a.Full(1.0f);
     h_b.Full(2.0f);
     h_c.Full(0.0f);
+
+//    int matM = h_a.Shape()[0];
+//    int matK = h_b.Shape()[0];
+//    int matN = h_a.Shape()[1];
     
 //    CodeCuda::C_Matmul(h_a.Shape()[0], h_b.Shape()[1], h_a.Shape()[1], h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data());
-    CodeCuda::C_MatmulTest(h_a.Shape()[0], h_b.Shape()[1], h_a.Shape()[1], h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data(), 3);
+    CodeCuda::C_Matmul_Test(M, N, K, h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data(), runs);
 
     if (M <= 8)
-    {
+    {   //h_b.Print();
         h_c.Print();
     }
 }
@@ -34,7 +37,7 @@ void TestMatmulShapes()
     };
 
     std::vector<MatrixSizes> sizes = {
-        MatrixSizes{8, 8, 8},
+        MatrixSizes{2, 4, 6},
         MatrixSizes{256, 28, 256},
         MatrixSizes{128, 28, 256},
         MatrixSizes{256, 28, 128},
@@ -45,7 +48,7 @@ void TestMatmulShapes()
     for (auto& size : sizes)
     {
         printf("----------------- Test with sizes: %d X %d X %d -----------------\n", size.M, size.N, size.K);
-        TestLib(size.M, size.N, size.K, 5);
+        TestLib(size.M, size.N, size.K, 1);
         printf("\n\n");
     }
     
@@ -53,7 +56,9 @@ void TestMatmulShapes()
 int main()
 {
 
+    CodeCuda::C_Init();
     TestMatmulShapes();
+    CodeCuda::C_Shutdown();
     while (true)
     {
     }
