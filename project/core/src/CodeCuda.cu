@@ -43,7 +43,7 @@ namespace CodeKernels
         float acc = 0;
         for (int i = 0; i < N; ++i)
         {
-            acc += a[N * y + i] * b[K * i + x];
+            acc += a[y * N + i] * b[K * i + y];
         }
 
         //1 should be C
@@ -62,7 +62,7 @@ namespace CodeKernels
             return;
         }
         uint32_t x = x_global % K;
-        c[y * K + x] = abs(a[y * K + x] - b[y * K + x]);
+        c[y * K + x] = abs(a[y * K + x] - b[x * M + y]);
     }
 } // namespace CodeKernels
 
@@ -218,12 +218,12 @@ namespace CodeCuda
         //warmp
         for (int i = 0; i < 5; ++i)
         {
-            cublasSgemm('T', 'T', K, N, M, alpha, d_B_cublas, N, d_A_cublas, M, beta, d_C_cublas, M);
+            cublasSgemm('N', 'N', K, N, M, alpha, d_B_cublas, K, d_A_cublas, M, beta, d_C_cublas, K);
         }
         Wrappers::C_EventRecord(start_cublas);
         for (int i = 0; i < runs; ++i)
         {
-            cublasSgemm('T', 'T', K, N, M, alpha, d_B_cublas, N, d_A_cublas, M, beta, d_C_cublas, M);
+            cublasSgemm('N', 'N', K, N, M, alpha, d_B_cublas, K, d_A_cublas, M, beta, d_C_cublas, K);
         }
         Wrappers::C_EventRecord(stop_cublas);
         Wrappers::C_EventSynchronize(stop_cublas);
@@ -257,6 +257,13 @@ namespace CodeCuda
         printf("----- Matmul err compare -----\n");
         printf("Average error: %f\n", err_average);
         printf("Max error: %f\n", max_error);
+        if (max_error > 0.00001)
+        {
+            printf("-FAILED-\n");
+        }else
+        {
+            printf("-PASSED-\n");
+        }
         
         //output
         
