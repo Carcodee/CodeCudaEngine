@@ -6,9 +6,9 @@
 #include "vector"
 void TestLib(int M, int N, int K, int runs)
 {
-    CodeCuda::c_matrix h_a (M, N);
-    CodeCuda::c_matrix h_b (N, K);
-    CodeCuda::c_matrix h_c (M, K);
+    CodeCuda::c_matrix h_a (M, K);
+    CodeCuda::c_matrix h_b (K, N);
+    CodeCuda::c_matrix h_c (M, N);
 
     h_a.Full(1.0f);
     h_b.Full(2.0f);
@@ -26,8 +26,8 @@ void TestMatmulShapes()
     struct MatrixSizes
     {
         int M = 128; 
-        int N = 128; 
         int K = 128; 
+        int N = 128; 
     };
     
 
@@ -42,7 +42,7 @@ void TestMatmulShapes()
     };
     for (auto& size : sizes)
     {
-        printf("----------------- Test with sizes: %d X %d X %d -----------------\n", size.M, size.N, size.K);
+        printf("----------------- Test with sizes: %d X %d X %d -----------------\n", size.M, size.K, size.N);
         TestLib(size.M, size.N, size.K, 1);
         printf("\n\n");
     }
