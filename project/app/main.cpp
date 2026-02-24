@@ -18,7 +18,7 @@ void TestLib(int M, int N, int K, int runs)
 
     if (M <= 8)
     {   //h_b.Print();
-        h_c.Print();
+//        h_c.Print();
     }
 }
 void TestMatmulShapes()
@@ -38,7 +38,8 @@ void TestMatmulShapes()
         MatrixSizes{256, 28, 128},
         MatrixSizes{128, 256, 512},
         MatrixSizes{512, 256, 128},
-//        MatrixSizes{4098, 4098, 4098},
+        MatrixSizes{4098, 4098, 4098},
+        MatrixSizes{8098, 8098, 8098},
     };
     for (auto& size : sizes)
     {
