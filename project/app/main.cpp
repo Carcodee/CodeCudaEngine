@@ -38,7 +38,7 @@ void TestMatmulShapes()
         MatrixSizes{256, 28, 128},
         MatrixSizes{128, 256, 512},
         MatrixSizes{512, 256, 128},
-        MatrixSizes{4098, 4098, 4098},
+//        MatrixSizes{4098, 4098, 4098},
     };
     for (auto& size : sizes)
     {

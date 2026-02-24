@@ -1,3 +1,4 @@
+#include <chrono>
 #ifndef CODECUDA_CU
 #define CODECUDA_CU
 
@@ -158,6 +159,23 @@ namespace CodeCuda
         Wrappers::C_Free(d_C);
     }
 
+    void cpu_matmul(const int M, const int N, const int K, const float *a, const float *b, float *c)
+    {
+        for (int i = 0; i <M; ++i)
+        {
+            for (int j = 0; j < N; ++j)
+            {
+                float temp = 0.0f;
+                for (int k = 0; k < K; ++k)
+                {
+                    temp += a[i * K + k] * b[k * N + j];
+                }
+                c[i * N + j] = temp;
+            }
+            
+        }
+        
+    }
     void C_Matmul_Test(const int M, const int N, const int K, const float *a, const float *b, float *c, int runs)
     {
         if (c == nullptr)
@@ -165,6 +183,9 @@ namespace CodeCuda
             std::cout << "target buffer is empty\n";
             return;
         }
+        
+
+        //personal
         float *d_A, *d_B, *d_C;
         Wrappers::C_Malloc(&d_A, M * K * sizeof(float));
         Wrappers::C_Malloc(&d_B, K * N * sizeof(float));
@@ -177,8 +198,8 @@ namespace CodeCuda
         Wrappers::C_EventCreate(&start);
         Wrappers::C_EventCreate(&stop);
         dim3 block(32, 32, 1);
-        dim3 grid((N/32) + 1, (M/32) + 1, 1);
-        // warmup
+        dim3 grid(ceil(double(N)/32.0f), ceil(double(M)/32.0f), 1);
+        
         for (int i = 0; i < 5; ++i)
         {
             CodeKernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
@@ -219,7 +240,6 @@ namespace CodeCuda
 
         CUBLAS_CHECK(cublasCreate_v2(&handle));
 
-        //warmp
         for (int i = 0; i < 5; ++i)
         {
             cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_cublas, N, d_A_cublas, K, &beta, d_C_cublas, N);
@@ -237,12 +257,14 @@ namespace CodeCuda
         printf("Average Time cublas (ms): %f\n", ms_real_cublas);
         gflops = double((flops) * 1.0e-9f) / double(ms_real_cublas / 1000.0f);
         printf("GFLOPS/s cublas: %f\n", gflops);
+        
 
+        //personal vs cublas
         float *d_C_err;
         Wrappers::C_Malloc(&d_C_err, M * N * sizeof(float));
 
         dim3 block_err(128, 1, 1);
-        dim3 grid_err(int((M * N) / 128) + 1, 1, 1);
+        dim3 grid_err(ceil(double(M * N) / 128.0), 1, 1);
         CodeKernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_C_cublas, d_C_err);
 
         float *errMatrix;
@@ -257,10 +279,35 @@ namespace CodeCuda
             max_error = max(max_error, errMatrix[i]);
         }
         err_average /= float(M * N);
+
+        //personal vs cpu
+        auto *h_C = (float*)malloc(M * N * sizeof(float));
+        cpu_matmul(M, N, K, a, b, h_C);
+        float* d_h_C;
+        Wrappers::C_Malloc(&d_h_C, M * N * sizeof(float));
+
+        Wrappers::C_Memcpy(d_h_C, h_C, M * N * sizeof(float), cudaMemcpyHostToDevice);
+        
+        CodeKernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_h_C, d_C_err);
+        float *errMatrix_cpu;
+        errMatrix_cpu = new float[M * N];
+        Wrappers::C_Memcpy(errMatrix_cpu, d_C_err, M * N * sizeof(float), cudaMemcpyDeviceToHost);
+
+        float err_average_cpu = 0;
+        float max_error_cpu = 0;
+        for (int i = 0; i < M * N; ++i)
+        {
+            err_average_cpu += errMatrix_cpu[i];
+            max_error_cpu = max(max_error_cpu, errMatrix_cpu[i]);
+        }
+        err_average_cpu /= float(M * N);
+        
+        //print
         printf("----- Matmul err compare -----\n");
-        printf("Average error: %f\n", err_average);
+        printf("Average error (personal vs cublas): %f\n", err_average);
+        printf("Average error (personal vs cpu): %f\n", err_average_cpu);
         printf("Max error: %f\n", max_error);
-        if (max_error > 0.00001)
+        if (max_error > 0.00001 || max_error_cpu > 0.00001)
         {
             printf("-FAILED-\n");
         }else
@@ -277,13 +324,16 @@ namespace CodeCuda
         Wrappers::C_Free(d_B_cublas);
         Wrappers::C_Free(d_C_cublas);
         Wrappers::C_Free(d_C_err);
+        Wrappers::C_Free(d_h_C);
         Wrappers::C_EventDestroy(start);
         Wrappers::C_EventDestroy(stop);
         Wrappers::C_EventDestroy(start_cublas);
         Wrappers::C_EventDestroy(stop_cublas);
         CUBLAS_CHECK(cublasDestroy_v2(handle));
         delete [] errMatrix;
+        free(h_C);
     }
+    
 
     void C_Shutdown()
     {
