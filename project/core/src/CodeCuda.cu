@@ -16,7 +16,7 @@ namespace CodeKernels
     {
         uint32_t x_global = ((blockDim.x * blockIdx.x) + threadIdx.x);
         auto y = static_cast<uint32_t>(x_global / N);
-        if (y > M)
+        if (y >= M)
         {
             return;
         }
@@ -34,6 +34,8 @@ namespace CodeKernels
     {
         uint32_t x = ((blockDim.x * blockIdx.x) + threadIdx.x);
         uint32_t y = ((blockDim.y * blockIdx.y) + threadIdx.y);
+        extern __shared__ float sdata[];
+        
         if (y < M && x < N)
         {
             float acc = 0;
@@ -50,18 +52,43 @@ namespace CodeKernels
     {
         //x = rows
 #define BLOCKSIZE 32
-        uint32_t x = blockIdx.x * BLOCKSIZE + (threadIdx.x / BLOCKSIZE);
-        //y = cols
-        uint32_t y = blockIdx.y * BLOCKSIZE + (threadIdx.x % BLOCKSIZE);
-        if (x < M && y < N)
-        {
-            float acc = 0;
-            for (int i = 0; i < K; ++i)
-            {
-                acc += a[x * K + i] * b[N * i + y];
-            }
+        
+        extern __shared__ float smem[];
+        float* aS = smem;
+        float* bS = smem + BLOCKSIZE * BLOCKSIZE;
+        
+        uint32_t row = blockIdx.x * BLOCKSIZE + (threadIdx.x / BLOCKSIZE);
+        uint32_t col = blockIdx.y * BLOCKSIZE + (threadIdx.x % BLOCKSIZE);
+            
+        uint32_t localRow = (threadIdx.x / BLOCKSIZE);
+        uint32_t localCol = (threadIdx.x % BLOCKSIZE);
+        
+        a += blockIdx.x * BLOCKSIZE * K;
+        b += blockIdx.y * BLOCKSIZE;
 
-            c[x * N + y] = acc;
+        int tileCount = ceilf(float(K) / 32.0f);
+
+        float tmp = 0.0f;
+        for (int i = 0; i < tileCount; ++i)
+        {
+            bool aBounds = (row < M) && (i * BLOCKSIZE + localCol < K);                                                                                                                                             
+            bool bBounds = (i * BLOCKSIZE + localRow < K) && (col < N);
+            
+            aS[localRow * BLOCKSIZE + localCol] = aBounds ? a[localRow * K + localCol] : 0.0f;
+            bS[localRow * BLOCKSIZE + localCol] = bBounds ? b[localRow * N + localCol] : 0.0f;
+            __syncthreads();
+
+            a += BLOCKSIZE;
+            b += BLOCKSIZE * N;
+            #pragma unroll
+            for (int j = 0; j < BLOCKSIZE; ++j)
+            {
+                tmp += aS[localRow * BLOCKSIZE + j] * bS[j * BLOCKSIZE + localCol];
+            }
+            __syncthreads();
+        }
+        if (row < M && col < N) {                                                                                                                                                                               
+            c[row * N + col] = tmp;                                                                                                                                                                             
         }
     }
     __global__ void k_check_mat_err(const int M, const int N, const float *a, const float *b, float *c)
@@ -201,16 +228,16 @@ namespace CodeCuda
         cudaEvent_t start, stop;
         Wrappers::C_EventCreate(&start);
         Wrappers::C_EventCreate(&stop);
+        /*
         dim3 grid(ceil(double(N)/32.0f), ceil(double(M)/32.0f));
         dim3 block(32, 32);
+        */
 
-        /*
         dim3 grid(ceil(double(M)/32.0f), ceil(double(N)/32.0f));
         dim3 block(32 * 32);
-        */
         for (int i = 0; i < 5; ++i)
         {
-            CodeKernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            CodeKernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 3>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }
         Wrappers::C_GetLastError();
         Wrappers::C_DeviceSynchronize();
@@ -218,7 +245,7 @@ namespace CodeCuda
         Wrappers::C_EventRecord(start);
         for (int i = 0; i < runs; ++i)
         {
-            CodeKernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            CodeKernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }
         Wrappers::C_GetLastError();
         Wrappers::C_EventRecord(stop);

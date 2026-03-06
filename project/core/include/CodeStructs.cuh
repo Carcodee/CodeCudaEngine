@@ -21,7 +21,6 @@ namespace CodeCuda{
             this->shape[1] = N;
         }
         c_matrix& Full(float val){
-            int32_t y = 0;
             for(int32_t i = 0; i < this->data_size; i++){
                 data[i] = val;
             }
