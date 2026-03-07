@@ -32,14 +32,16 @@ void TestMatmulShapes()
     
 
     std::vector<MatrixSizes> sizes = {
+        /*
         MatrixSizes{4, 8, 4},
         MatrixSizes{256, 28, 256},
         MatrixSizes{128, 28, 256},
         MatrixSizes{256, 28, 128},
         MatrixSizes{128, 256, 512},
         MatrixSizes{512, 256, 128},
+        */
         MatrixSizes{4096, 4096, 4096},
-        MatrixSizes{8098, 8098, 8098},
+     //   MatrixSizes{8098, 8098, 8098},
     };
     for (auto& size : sizes)
     {

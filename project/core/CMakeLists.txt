@@ -14,7 +14,7 @@ set_target_properties(codeCudaLib PROPERTIES
         POSITION_INDEPENDENT_CODE ON)
 
 target_compile_options(codeCudaLib PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>
+        $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math --ptxas-options=-v>
 )
 
 target_link_libraries(codeCudaLib

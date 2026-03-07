@@ -1,4 +1,4 @@
-#include <chrono>
+#include <functional>
 #ifndef CODECUDA_CU
 #define CODECUDA_CU
 
@@ -7,9 +7,11 @@
 #include "CodeInclude.h"
 #include "cublas.h"
 #include "cuda_runtime.h"
+#include <map>
+#include <chrono>
 
 
-namespace CodeKernels
+namespace code_kernels
 {
     // A: M×K, B: K×N, C: M×N  (standard BLAS — K is the shared/inner dimension)
     __global__ void k_matmul(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
@@ -34,7 +36,6 @@ namespace CodeKernels
     {
         uint32_t x = ((blockDim.x * blockIdx.x) + threadIdx.x);
         uint32_t y = ((blockDim.y * blockIdx.y) + threadIdx.y);
-        extern __shared__ float sdata[];
         
         if (y < M && x < N)
         {
@@ -48,34 +49,34 @@ namespace CodeKernels
         }
     }
     
+#define BLOCKSIZE 32
     __global__ void k_matmul_x_y(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
     {
         //x = rows
-#define BLOCKSIZE 32
-        
         extern __shared__ float smem[];
-        float* aS = smem;
-        float* bS = smem + BLOCKSIZE * BLOCKSIZE;
+        float* a_s = smem;
+        float* b_s = smem + BLOCKSIZE * BLOCKSIZE;
         
         uint32_t row = blockIdx.x * BLOCKSIZE + (threadIdx.x / BLOCKSIZE);
         uint32_t col = blockIdx.y * BLOCKSIZE + (threadIdx.x % BLOCKSIZE);
             
-        uint32_t localRow = (threadIdx.x / BLOCKSIZE);
-        uint32_t localCol = (threadIdx.x % BLOCKSIZE);
+        uint32_t local_row = (threadIdx.x / BLOCKSIZE);
+        uint32_t local_col = (threadIdx.x % BLOCKSIZE);
         
         a += blockIdx.x * BLOCKSIZE * K;
         b += blockIdx.y * BLOCKSIZE;
 
-        int tileCount = ceilf(float(K) / 32.0f);
+        int tile_count = ceilf(float(K) / 32.0f);
 
         float tmp = 0.0f;
-        for (int i = 0; i < tileCount; ++i)
+        for (int i = 0; i < tile_count; ++i)
         {
-            bool aBounds = (row < M) && (i * BLOCKSIZE + localCol < K);                                                                                                                                             
-            bool bBounds = (i * BLOCKSIZE + localRow < K) && (col < N);
+            bool a_bounds = (row < M) && (i * BLOCKSIZE + local_col < K);                                                                                                                                             
+            bool b_bounds = (i * BLOCKSIZE + local_row < K) && (col < N);
             
-            aS[localRow * BLOCKSIZE + localCol] = aBounds ? a[localRow * K + localCol] : 0.0f;
-            bS[localRow * BLOCKSIZE + localCol] = bBounds ? b[localRow * N + localCol] : 0.0f;
+            a_s[local_row * BLOCKSIZE + local_col] = a_bounds ? a[local_row * K + local_col] : 0.0f;
+            b_s[local_row * BLOCKSIZE + local_col] = b_bounds ? b[local_row * N + local_col] : 0.0f;
+            
             __syncthreads();
 
             a += BLOCKSIZE;
@@ -83,7 +84,7 @@ namespace CodeKernels
             #pragma unroll
             for (int j = 0; j < BLOCKSIZE; ++j)
             {
-                tmp += aS[localRow * BLOCKSIZE + j] * bS[j * BLOCKSIZE + localCol];
+                tmp += a_s[local_row * BLOCKSIZE + j] * b_s[j * BLOCKSIZE + local_col];
             }
             __syncthreads();
         }
@@ -91,20 +92,80 @@ namespace CodeKernels
             c[row * N + col] = tmp;                                                                                                                                                                             
         }
     }
+    
+#define BT 2 
+#define BLOCKSIZE_BT 32
+constexpr int BM = BLOCKSIZE_BT * BT ;
+constexpr int BK = BLOCKSIZE_BT / BT;
+constexpr int BN = BLOCKSIZE_BT * BT ;
+    
+    __global__ void k_matmul_bt(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
+    {
+        //x = rows
+        extern __shared__ float smem[];
+        
+        float* a_s = smem;
+        float* b_s = smem + BLOCKSIZE_BT * BLOCKSIZE_BT;
+        
+        uint32_t t_row = blockIdx.x * BLOCKSIZE_BT + (threadIdx.x / BLOCKSIZE_BT);
+        uint32_t t_col = blockIdx.y * BLOCKSIZE_BT + (threadIdx.x % BLOCKSIZE_BT);
+
+        uint32_t local_row = (threadIdx.x / BLOCKSIZE_BT);
+        uint32_t local_col = (threadIdx.x % BLOCKSIZE_BT);
+        
+        a += blockIdx.x * BLOCKSIZE_BT * K;
+        b += blockIdx.y * BLOCKSIZE_BT;
+
+        float bt[BT];
+
+        int tile_count = ceilf(float(K) / BK);
+
+        float tmp = 0.0f;
+        for (int i = 0; i < tile_count; ++i)
+        {
+            a_s[local_row * BLOCKSIZE_BT + local_col] = a[local_row * K + local_col];
+            b_s[local_row * BLOCKSIZE_BT + local_col] = b[local_row * N + local_col];
+            __syncthreads();
+
+            a += BLOCKSIZE_BT;
+            b += BLOCKSIZE_BT * N;
+            #pragma unroll
+            for (int j = 0; j < BLOCKSIZE_BT; ++j)
+            {
+                tmp += a_s[local_row * BLOCKSIZE_BT + j] * b_s[j * BLOCKSIZE_BT + local_col];
+            }
+            __syncthreads();
+        }
+        if (t_row < M && t_col < N) {
+            for (int row_offset = 0; row_offset < BT; ++row_offset)
+            {
+                for (int col_offset = 0; col_offset < BT; ++col_offset)
+                {
+                    c[(t_row * N * row_offset) + (t_col + col_offset)] = tmp;
+                }
+            }
+        }
+    }
     __global__ void k_check_mat_err(const int M, const int N, const float *a, const float *b, float *c)
     {
         uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (idx >= M * N) return;
-
         c[idx] = fabsf(a[idx] - b[idx]);
     }
-} // namespace CodeKernels
+} // namespace code_kernels
 
 namespace CodeCuda
 {
+    namespace Internals
+    {
+        struct kernel_launcher
+        {
+            std::function<void()> kernel;
+        };
+        
+    }
     namespace Wrappers
     {
-
         inline void C_Free(void *ptr) { CUDA_CHECK(cudaFree(ptr)); }
         inline void C_DeviceSynchronize() { CUDA_CHECK(cudaDeviceSynchronize()); }
         inline void C_GetLastError() { CUDA_CHECK(cudaGetLastError()); }
@@ -178,7 +239,7 @@ namespace CodeCuda
 
         dim3 block(32, 1, 1);
         dim3 grid(int((M * N) / 32) + 1, 1, 1);
-        CodeKernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+        code_kernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         Wrappers::C_GetLastError();
         Wrappers::C_DeviceSynchronize();
 
@@ -206,6 +267,14 @@ namespace CodeCuda
         }
         
     }
+
+    void add_kernel_launcher(const std::string& name, std::function<void()> kernelFunc, std::map<std::string, Internals::kernel_launcher>& kernels_out)
+    {
+        Internals::kernel_launcher launcher;
+        launcher.kernel = std::move(kernelFunc);
+        kernels_out.try_emplace(name, launcher);
+    }
+    
     void C_Matmul_Test(const int M, const int N, const int K, const float *a, const float *b, float *c, int runs)
     {
         if (c == nullptr)
@@ -214,7 +283,6 @@ namespace CodeCuda
             return;
         }
         bool testPassed = true;
-        
 
         //personal
         float *d_A, *d_B, *d_C;
@@ -232,12 +300,34 @@ namespace CodeCuda
         dim3 grid(ceil(double(N)/32.0f), ceil(double(M)/32.0f));
         dim3 block(32, 32);
         */
+        
+        std::map<std::string, Internals::kernel_launcher> kernels;
+        
+        add_kernel_launcher("naive_coalescent", [N, M, K, d_A, d_B, d_C]()
+        {
+            dim3 grid(ceil(double(N)/32.0f), ceil(double(M)/32.0f));
+            dim3 block(32, 32);
+            code_kernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+        }, kernels);
+        add_kernel_launcher("smem", [N, M, K, d_A, d_B, d_C]()
+        {
+            dim3 grid(ceil(double(M)/32.0f * BT), ceil(double(N)/32.0f * BT));
+            dim3 block(32 * 32);
+            code_kernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+        }, kernels);
+        
+        add_kernel_launcher("b_tilling", [N, M, K, d_A, d_B, d_C]()
+        {
+            dim3 grid(ceil(double(M)/(32.0f * BT)), ceil(double(N)/(32.0f * BT)));
+            dim3 block(32 * 32);
+            code_kernels::k_matmul_bt<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+        }, kernels);
+        
 
-        dim3 grid(ceil(double(M)/32.0f), ceil(double(N)/32.0f));
-        dim3 block(32 * 32);
+
         for (int i = 0; i < 5; ++i)
         {
-            CodeKernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 3>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            kernels.at("b_tilling").kernel();
         }
         Wrappers::C_GetLastError();
         Wrappers::C_DeviceSynchronize();
@@ -245,7 +335,7 @@ namespace CodeCuda
         Wrappers::C_EventRecord(start);
         for (int i = 0; i < runs; ++i)
         {
-            CodeKernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            kernels.at("b_tilling").kernel();
         }
         Wrappers::C_GetLastError();
         Wrappers::C_EventRecord(stop);
@@ -276,15 +366,20 @@ namespace CodeCuda
         Wrappers::C_EventCreate(&stop_cublas);
 
         CUBLAS_CHECK(cublasCreate_v2(&handle));
+        
+        add_kernel_launcher("cublas", [handle, N, M, K, alpha,d_B_cublas, d_A_cublas, beta, d_C_cublas]()
+        {
+            CUBLAS_CHECK(cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_cublas, N, d_A_cublas, K, &beta, d_C_cublas, N));
+        }, kernels);
 
         for (int i = 0; i < 5; ++i)
         {
-            CUBLAS_CHECK(cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_cublas, N, d_A_cublas, K, &beta, d_C_cublas, N));
+            kernels.at("cublas").kernel();
         }
         Wrappers::C_EventRecord(start_cublas);
         for (int i = 0; i < runs; ++i)
         {
-            CUBLAS_CHECK(cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_cublas, N, d_A_cublas, K, &beta, d_C_cublas, N));
+            kernels.at("cublas").kernel();
         }
         Wrappers::C_EventRecord(stop_cublas);
         Wrappers::C_EventSynchronize(stop_cublas);
@@ -302,7 +397,7 @@ namespace CodeCuda
 
         dim3 block_err(128, 1, 1);
         dim3 grid_err(ceil(double(M * N) / 128.0), 1, 1);
-        CodeKernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_C_cublas, d_C_err);
+        code_kernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_C_cublas, d_C_err);
         Wrappers::C_GetLastError();
         Wrappers::C_DeviceSynchronize();
 
@@ -340,7 +435,7 @@ namespace CodeCuda
 
             Wrappers::C_Memcpy(d_h_C, h_C, M * N * sizeof(float), cudaMemcpyHostToDevice);
             
-            CodeKernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_h_C, d_C_err);
+            code_kernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_h_C, d_C_err);
             Wrappers::C_GetLastError();
             Wrappers::C_DeviceSynchronize();
             float *errMatrix_cpu;
