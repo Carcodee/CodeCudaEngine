@@ -93,56 +93,55 @@ namespace code_kernels
         }
     }
     
-#define BT 2 
 #define BLOCKSIZE_BT 32
-constexpr int BM = BLOCKSIZE_BT * BT ;
-constexpr int BK = BLOCKSIZE_BT / BT;
-constexpr int BN = BLOCKSIZE_BT * BT ;
     
+#define BM 64
+#define BK 8
+#define BN 64
+
     __global__ void k_matmul_bt(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
     {
         //x = rows
         extern __shared__ float smem[];
         
         float* a_s = smem;
-        float* b_s = smem + BLOCKSIZE_BT * BLOCKSIZE_BT;
+        float* b_s = smem + (BM * BK);
         
-        uint32_t t_row = blockIdx.x * BLOCKSIZE_BT + (threadIdx.x / BLOCKSIZE_BT);
-        uint32_t t_col = blockIdx.y * BLOCKSIZE_BT + (threadIdx.x % BLOCKSIZE_BT);
+        uint32_t t_row = blockIdx.x * BK + (threadIdx.x / BK);
+        uint32_t t_col = blockIdx.y * BN + (threadIdx.x % BN);
 
-        uint32_t local_row = (threadIdx.x / BLOCKSIZE_BT);
-        uint32_t local_col = (threadIdx.x % BLOCKSIZE_BT);
+        uint32_t local_row_a = (threadIdx.x / BK);
+        uint32_t local_col_a = (threadIdx.x % BK);
         
-        a += blockIdx.x * BLOCKSIZE_BT * K;
-        b += blockIdx.y * BLOCKSIZE_BT;
+        uint32_t local_row_b = (threadIdx.x / BN);
+        uint32_t local_col_b = (threadIdx.x % BN);
+        
+        a += blockIdx.x * BK * K;
+        b += blockIdx.y * BN;
 
-        float bt[BT];
+        float bt[BK] = {0.0};
 
         int tile_count = ceilf(float(K) / BK);
 
-        float tmp = 0.0f;
         for (int i = 0; i < tile_count; ++i)
         {
-            a_s[local_row * BLOCKSIZE_BT + local_col] = a[local_row * K + local_col];
-            b_s[local_row * BLOCKSIZE_BT + local_col] = b[local_row * N + local_col];
+            a_s[local_row_a * BK + local_col_a] = a[local_row_a * K + local_col_a];
+            b_s[local_row_b * BN + local_col_b] = b[local_row_b * N + local_col_b];
             __syncthreads();
 
-            a += BLOCKSIZE_BT;
-            b += BLOCKSIZE_BT * N;
+            a += BK;
+            b += BK * N;
             #pragma unroll
-            for (int j = 0; j < BLOCKSIZE_BT; ++j)
+            for (int j = 0; j < BK; ++j)
             {
-                tmp += a_s[local_row * BLOCKSIZE_BT + j] * b_s[j * BLOCKSIZE_BT + local_col];
+                bt[0] += a_s[local_row_a * BK + j] * b_s[j * BN + local_col_b];
             }
             __syncthreads();
         }
         if (t_row < M && t_col < N) {
-            for (int row_offset = 0; row_offset < BT; ++row_offset)
+            for (int col_offset = 0; col_offset < BK; ++col_offset)
             {
-                for (int col_offset = 0; col_offset < BT; ++col_offset)
-                {
-                    c[(t_row * N * row_offset) + (t_col + col_offset)] = tmp;
-                }
+                c[(t_row * N * BK) + (t_col * BK + col_offset)] = bt[0];
             }
         }
     }
@@ -311,16 +310,16 @@ namespace CodeCuda
         }, kernels);
         add_kernel_launcher("smem", [N, M, K, d_A, d_B, d_C]()
         {
-            dim3 grid(ceil(double(M)/32.0f * BT), ceil(double(N)/32.0f * BT));
+            dim3 grid(ceil(double(M)/ 32.0f), ceil(double(N)/32.0f));
             dim3 block(32 * 32);
             code_kernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }, kernels);
         
         add_kernel_launcher("b_tilling", [N, M, K, d_A, d_B, d_C]()
         {
-            dim3 grid(ceil(double(M)/(32.0f * BT)), ceil(double(N)/(32.0f * BT)));
-            dim3 block(32 * 32);
-            code_kernels::k_matmul_bt<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            dim3 grid(ceil(double(M)/BM), ceil(double(N)/BN));
+            dim3 block(BM * BK + BK * BN);
+            code_kernels::k_matmul_bt<<<grid, block, BM * BK + BK * BN * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }, kernels);
         
 
