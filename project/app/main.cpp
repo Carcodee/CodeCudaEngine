@@ -10,16 +10,17 @@ void TestLib(int M, int N, int K, int runs)
     CodeCuda::c_matrix h_b (K, N);
     CodeCuda::c_matrix h_c (M, N);
 
-    h_a.Full(1.0f);
-    h_b.Full(2.0f);
+    h_a.Full(1.0);
+    h_b.Full(2.0);
     h_c.Full(0.0f);
+    
     
     CodeCuda::C_Matmul_Test(M, N, K, h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data(), runs);
 
     if (M <= 8)
     {   //h_b.Print();
     }
-//        h_c.Print();
+    h_c.Print(true);
 }
 void TestMatmulShapes()
 {
@@ -39,10 +40,10 @@ void TestMatmulShapes()
         MatrixSizes{256, 28, 128},
         MatrixSizes{128, 256, 512},
         MatrixSizes{512, 256, 128},
-        MatrixSizes{4096, 4096, 4096},
         MatrixSizes{8098, 8098, 8098},
-        */
         MatrixSizes{64, 64, 64},
+        */
+        MatrixSizes{4096, 4096, 4096},
     };
     for (auto& size : sizes)
     {

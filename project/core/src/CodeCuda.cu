@@ -2,9 +2,9 @@
 #ifndef CODECUDA_CU
 #define CODECUDA_CU
 
+#include "CodeInclude.h"
 #include <iostream>
 #include "CodeCommon.hpp"
-#include "CodeInclude.h"
 #include "cublas.h"
 #include "cuda_runtime.h"
 #include <map>
@@ -107,8 +107,8 @@ namespace code_kernels
         float* a_s = smem;
         float* b_s = smem + (BM * BK);
         
-        uint32_t t_row = blockIdx.x * BK + (threadIdx.x / BK);
-        uint32_t t_col = blockIdx.y * BN + (threadIdx.x % BN);
+        uint32_t row = blockIdx.x * BM + (threadIdx.x / (BK));
+        uint32_t col = blockIdx.y * BK + (threadIdx.x % (BK));
 
         uint32_t local_row_a = (threadIdx.x / BK);
         uint32_t local_col_a = (threadIdx.x % BK);
@@ -116,12 +116,12 @@ namespace code_kernels
         uint32_t local_row_b = (threadIdx.x / BN);
         uint32_t local_col_b = (threadIdx.x % BN);
         
-        a += blockIdx.x * BK * K;
-        b += blockIdx.y * BN;
+        a += blockIdx.x * BM * K;
+        b += col;
 
         float bt[BK] = {0.0};
 
-        int tile_count = ceilf(float(K) / BK);
+        int tile_count = ceilf(float(K) / float(BK));
 
         for (int i = 0; i < tile_count; ++i)
         {
@@ -134,16 +134,21 @@ namespace code_kernels
             #pragma unroll
             for (int j = 0; j < BK; ++j)
             {
-                bt[0] += a_s[local_row_a * BK + j] * b_s[j * BN + local_col_b];
+                for (int k = 0; k < BK; ++k)
+                {
+                    bt[j] += a_s[local_row_a * BK + ((local_col_a + j) % BK)] * b_s[k * BN + ((local_col_b + j) % BK)];
+                }
             }
             __syncthreads();
         }
-        if (t_row < M && t_col < N) {
+        
+        if (row < M) {
             for (int col_offset = 0; col_offset < BK; ++col_offset)
             {
-                c[(t_row * N * BK) + (t_col * BK + col_offset)] = bt[0];
+                c[(row * N) + (BK * col_offset) + col] = bt[col_offset];
             }
         }
+        
     }
     __global__ void k_check_mat_err(const int M, const int N, const float *a, const float *b, float *c)
     {
@@ -218,14 +223,14 @@ namespace CodeCuda
     void C_Init()
     {
         cublasInit();
-        std::cout << "Hello from cuda lib\n";
+        CODECUDA_PRINTLN("Initialized codeCudaLib");
     }
 
     void C_Matmul(const int M, const int N, const int K, const float *a, const float *b, float *c)
     {
         if (c == nullptr)
         {
-            std::cout << "target buffer is empty\n";
+            CODECUDA_LOG_WARNING("target buffer is empty");
             return;
         }
         float *d_A, *d_B, *d_C;
@@ -278,7 +283,7 @@ namespace CodeCuda
     {
         if (c == nullptr)
         {
-            std::cout << "target buffer is empty\n";
+            CODECUDA_LOG_WARNING("target buffer is empty");
             return;
         }
         bool testPassed = true;
@@ -317,9 +322,10 @@ namespace CodeCuda
         
         add_kernel_launcher("b_tilling", [N, M, K, d_A, d_B, d_C]()
         {
-            dim3 grid(ceil(double(M)/BM), ceil(double(N)/BN));
-            dim3 block(BM * BK + BK * BN);
-            code_kernels::k_matmul_bt<<<grid, block, BM * BK + BK * BN * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            int s =  ceil(double(N)/double(BK * BK));
+            dim3 grid(ceil(double(M)/double(BM)), ceil(double(N)/double(BK * BK)));
+            dim3 block(BM * BK);
+            code_kernels::k_matmul_bt<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }, kernels);
         
 
@@ -342,11 +348,11 @@ namespace CodeCuda
         float ms = 0;
         Wrappers::C_EventElapsedTime(&ms, start, stop);
         double ms_real = ms / double(runs);
-        printf("Average Time personal (ms): %f\n", ms_real);
+        CODECUDA_PRINTLN("Average Time personal (ms): ", ms_real);
         auto flops = int64_t(2 * int64_t(M) * int64_t(N) * int64_t(K));
         
         double gflops = (double(flops) * 1.0e-9f) / double(ms_real / 1000.0f);
-        printf("GFLOPS/s personal: %f\n", gflops);
+        CODECUDA_PRINTLN("GFLOPS/s personal: ", gflops);
 
         // cubulas
         float *d_A_cublas, *d_B_cublas, *d_C_cublas;
@@ -385,9 +391,9 @@ namespace CodeCuda
         float ms_cublas = 0;
         Wrappers::C_EventElapsedTime(&ms_cublas, start_cublas, stop_cublas);
         double ms_real_cublas = ms_cublas / double(runs);
-        printf("Average Time cublas (ms): %f\n", ms_real_cublas);
+        CODECUDA_PRINTLN("Average Time cublas (ms): ", ms_real_cublas);
         gflops = double((flops) * 1.0e-9f) / double(ms_real_cublas / 1000.0f);
-        printf("GFLOPS/s cublas: %f\n", gflops);
+        CODECUDA_PRINTLN("GFLOPS/s cublas: ", gflops);
         
 
         //personal vs cublas
@@ -466,7 +472,7 @@ namespace CodeCuda
             errOutput+= std::format("-PASSED-\n");
         }
 
-        printf(errOutput.c_str());
+        CODECUDA_PRINTLN(errOutput.c_str());
         
         Wrappers::C_Memcpy(c, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
 

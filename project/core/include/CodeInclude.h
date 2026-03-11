@@ -7,7 +7,7 @@
 #define CODEINCLUDE_H
 
 #include "assert.h"
-#include "string";
+#include "string"
 #include "CodeStructs.cuh"
 #include "CodeCuda.cuh"
 

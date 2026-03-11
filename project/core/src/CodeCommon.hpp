@@ -6,13 +6,14 @@
 #define CODECOMMON_HPP
 
 #include "assert.h"
+#include "common/Logger.hpp"
 
 namespace CodeCommon
 {
 #define CUDA_CHECK(x) do { \
     cudaError_t err = x; \
     if(err != cudaSuccess){ \
-        printf("CUDA error %s at %s:%d\n", cudaGetErrorString(err), __FILE__, __LINE__); \
+        CODECUDA_LOG_ERROR("CUDA error: ", cudaGetErrorString(err)); \
         assert(false);\
         return; \
     }\
@@ -21,7 +22,7 @@ namespace CodeCommon
 #define CUBLAS_CHECK(x) do { \
     cublasStatus_t err = x; \
     if(err != CUBLAS_STATUS_SUCCESS){ \
-        printf("CUBLAS error %s at %s:%d\n", cublasGetError(), __FILE__, __LINE__); \
+        CODECUDA_LOG_ERROR("CUBLAS error code: ", static_cast<int>(err)); \
         assert(false);\
         return; \
     }\
