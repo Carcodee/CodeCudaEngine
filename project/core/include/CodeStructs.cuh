@@ -130,7 +130,7 @@ namespace CodeCuda{
         output << "]\n\n";
         return output.str();
     }
-    
+   
     struct c_matrix{
         c_matrix(const c_matrix&) = delete;
         c_matrix& operator=(const c_matrix&) = delete;
@@ -159,10 +159,25 @@ namespace CodeCuda{
             return *this;
         }
         
-        c_matrix& Rand(int min, int max){
+        c_matrix& Full_Arange(){
+            for(int32_t i = 0; i < this->data_size; i++){
+                data[i] = float(i);
+            }
+            return *this;
+        }
+        
+        c_matrix& RandInt(int min, int max){
             srand(40);
             for(int32_t i = 0; i < this->data_size; i++){
                 data[i] = float(min + (rand() % (max - min)));
+            }
+            return *this;
+        }
+        c_matrix& Rand(int min, int max){
+            srand(40);
+            for(int32_t i = 0; i < this->data_size; i++){
+                float decimal = float(float(rand())/float(RAND_MAX));
+                data[i] = float(min + (rand() % (max - min))) + decimal;
             }
             return *this;
         }

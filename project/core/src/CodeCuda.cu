@@ -93,13 +93,12 @@ namespace code_kernels
         }
     }
     
-#define BLOCKSIZE_BT 32
     
 #define BM 64
 #define BK 8
 #define BN 64
-
-    __global__ void k_matmul_bt(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
+    
+    __global__ void k_matmul_bt_row_tile(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
     {
         //x = rows
         extern __shared__ float smem[];
@@ -108,21 +107,23 @@ namespace code_kernels
         float* b_s = smem + (BM * BK);
         
         uint32_t row = blockIdx.x * BM + (threadIdx.x / (BK));
-        uint32_t col = blockIdx.y * BK + (threadIdx.x % (BK));
+        uint32_t local_col = (threadIdx.x % (BK));
 
         uint32_t local_row_a = (threadIdx.x / BK);
         uint32_t local_col_a = (threadIdx.x % BK);
         
         uint32_t local_row_b = (threadIdx.x / BN);
         uint32_t local_col_b = (threadIdx.x % BN);
+        int b_stride = BN/BK;
         
         a += blockIdx.x * BM * K;
-        b += col;
+        b += blockIdx.y * b_stride;
 
         float bt[BK] = {0.0};
 
         int tile_count = ceilf(float(K) / float(BK));
 
+        //k
         for (int i = 0; i < tile_count; ++i)
         {
             a_s[local_row_a * BK + local_col_a] = a[local_row_a * K + local_col_a];
@@ -131,24 +132,80 @@ namespace code_kernels
 
             a += BK;
             b += BK * N;
-            #pragma unroll
             for (int j = 0; j < BK; ++j)
             {
+                float a_temp = a_s[local_row_a * BK + j];
                 for (int k = 0; k < BK; ++k)
                 {
-                    bt[j] += a_s[local_row_a * BK + ((local_col_a + j) % BK)] * b_s[k * BN + ((local_col_b + j) % BK)];
+                    bt[k] += a_temp * b_s[j * BN + local_col];
+                    //(a0,0 * b0,0)k++... (a0,0 * b8,0...)k++... (a0,0 * b16,0)k++ (j++)
+                    //(a1,0 * b0,1)k++... (a1,0 * b8,1...)k++... (a1,0 * b16,1)k++ (j++)
+                    //(a2,0 * b0,2)k++... (a2,0 * b8,2...)k++... (a2,0 * b16,2)k++ (j++)
                 }
             }
             __syncthreads();
         }
         
         if (row < M) {
+        }
+            int total_c_entries_per_block = (blockIdx.y * BK * BK);
+            //each threat cal 0 ... 8 ... 16 ... 24 ... 32 ... etc
             for (int col_offset = 0; col_offset < BK; ++col_offset)
             {
-                c[(row * N) + (BK * col_offset) + col] = bt[col_offset];
+                c[(row * N) + (BK * col_offset) + total_c_entries_per_block + local_col] = bt[col_offset]; 
             }
-        }
         
+    }
+
+    __global__ void k_matmul_bt_col_tile(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
+    {
+        //x = rows
+        //y = rows
+        extern __shared__ float smem[];
+        
+        float* a_s = smem;
+        float* b_s = smem + (BM * BK);
+        
+        uint32_t row_thread = threadIdx.x / BN;
+        uint32_t col_thread = threadIdx.x % BN;
+
+        uint32_t local_row_a = (threadIdx.x / BK);
+        uint32_t local_col_a = (threadIdx.x % BK);
+        
+        uint32_t local_row_b = (threadIdx.x / BN);
+        uint32_t local_col_b = (threadIdx.x % BN);
+        
+        a += blockIdx.y * BM * K;
+        b += blockIdx.x * BN;
+        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+
+        float bt[BK] = {0.0};
+
+        int tile_count = ceilf(float(K) / float(BK));
+
+        //k
+        for (int i = 0; i < tile_count; ++i)
+        {
+            a_s[local_row_a * BK + local_col_a] = a[local_row_a * K + local_col_a];
+            b_s[local_row_b * BN + local_col_b] = b[local_row_b * N + local_col_b];
+            __syncthreads();
+        
+            a += BK;
+            b += BK * N;
+            for (int j = 0; j < BK; ++j)
+            {
+                float b_temp = b_s[j * BN + col_thread];
+                for (int k = 0; k < BK; ++k)
+                {
+                    bt[k] += a_s[(BK * BK * row_thread) + (BK * k) + j] * b_temp;
+                }
+            }
+            __syncthreads();
+        }
+        for (int row_offset = 0; row_offset < BK; ++row_offset)
+        {
+            c[(row_thread * BK * N) + (row_offset * N) + col_thread] = bt[row_offset];
+        }
     }
     __global__ void k_check_mat_err(const int M, const int N, const float *a, const float *b, float *c)
     {
@@ -320,19 +377,25 @@ namespace CodeCuda
             code_kernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }, kernels);
         
-        add_kernel_launcher("b_tilling", [N, M, K, d_A, d_B, d_C]()
+        add_kernel_launcher("b_tilling_col_tile", [N, M, K, d_A, d_B, d_C]()
         {
-            int s =  ceil(double(N)/double(BK * BK));
+            dim3 grid(ceil(double(N)/double(BN)), ceil(double(M)/double(BK * BK)));
+            dim3 block(BM * BK);
+            code_kernels::k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+        }, kernels);
+        
+        add_kernel_launcher("b_tilling_row_tile", [N, M, K, d_A, d_B, d_C]()
+        {
             dim3 grid(ceil(double(M)/double(BM)), ceil(double(N)/double(BK * BK)));
             dim3 block(BM * BK);
-            code_kernels::k_matmul_bt<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            code_kernels::k_matmul_bt_row_tile<<<grid, block, BM * BK + BK * BN * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }, kernels);
         
 
 
         for (int i = 0; i < 5; ++i)
         {
-            kernels.at("b_tilling").kernel();
+            kernels.at("b_tilling_col_tile").kernel();
         }
         Wrappers::C_GetLastError();
         Wrappers::C_DeviceSynchronize();
@@ -340,9 +403,10 @@ namespace CodeCuda
         Wrappers::C_EventRecord(start);
         for (int i = 0; i < runs; ++i)
         {
-            kernels.at("b_tilling").kernel();
+            kernels.at("b_tilling_col_tile").kernel();
         }
         Wrappers::C_GetLastError();
+        
         Wrappers::C_EventRecord(stop);
         Wrappers::C_EventSynchronize(stop);
         float ms = 0;
@@ -354,6 +418,11 @@ namespace CodeCuda
         double gflops = (double(flops) * 1.0e-9f) / double(ms_real / 1000.0f);
         CODECUDA_PRINTLN("GFLOPS/s personal: ", gflops);
 
+        //
+        // for (int i = 0; i < runs; ++i)
+        // {
+        //     kernels.at("b_tilling_row_tile").kernel();
+        // }
         // cubulas
         float *d_A_cublas, *d_B_cublas, *d_C_cublas;
         Wrappers::C_Malloc(&d_A_cublas, M * K * sizeof(float));
