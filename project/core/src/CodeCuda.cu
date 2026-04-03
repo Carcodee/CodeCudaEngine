@@ -207,6 +207,75 @@ namespace code_kernels
             c[(row_thread * BK * N) + (row_offset * N) + col_thread] = bt[row_offset];
         }
     }
+    __global__ void k_matmul_bt_2d_tilling(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
+    {
+        //x = rows
+        //y = rows
+        extern __shared__ float smem[];
+        
+        float* a_s = smem;
+        float* b_s = smem + (BM * BK);
+        
+        uint32_t row_thread = threadIdx.x / BK;
+        uint32_t col_thread = threadIdx.x % BK;
+
+        uint32_t local_row_a = (threadIdx.x / BK);
+        uint32_t local_col_a = (threadIdx.x % BK);
+        
+        uint32_t local_row_b = (threadIdx.x / BN);
+        uint32_t local_col_b = (threadIdx.x % BN);
+        
+        a += blockIdx.y * BM * K;
+        b += blockIdx.x * BN;
+        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+
+        float bt[BK * BK] = {0.0};
+
+        int tile_count = ceilf(float(K) / float(BK));
+
+        //keep in mind for this matmul algorithms there is a lot of sizes that need to match
+        // in this case is not casuality that BK * BN/BK * BK = 8, that means we can safely jump on 
+        //a and b by BM * K and in B by BN
+        uint32_t stride_a = (BK * BM) / (BK * BK);
+        uint32_t stride_b = (BK * BN) / (BK * BK);
+        for (int i = 0; i < tile_count; ++i)
+        {
+            for (int curr_stride = 0; curr_stride < stride_a; ++curr_stride)
+            {
+                uint32_t stride_row_offset = local_row_a * BK + curr_stride * BK;
+                a_s[stride_row_offset + local_col_a] = a[stride_row_offset * K + local_col_a];
+            }
+            for (int curr_stride = 0; curr_stride < stride_b; ++curr_stride)
+            {
+                uint32_t stride_col_offset = local_col_b + (curr_stride * BK);
+                b_s[local_row_b * BN + stride_col_offset] = b[(local_row_b * N) + stride_col_offset];
+            }
+            __syncthreads();
+        
+            a += BK;
+            b += BK * N;
+            for (int j = 0; j < BK; ++j)
+            {
+                for (int col_index = 0; col_index < BK; ++col_index)
+                {
+                    //next: index here good 
+                    // float b_temp = b_s[j * BN  + col_index];
+                    for (int row_index = 0; row_index < BK; ++row_index)
+                    {
+                        // bt[row_index * BK + j] += b_temp * a_s[row_thread * BK + row_index * BK + j];
+                    }
+                }
+            }
+            __syncthreads();
+        }
+        for (int row_offset = 0; row_offset < BK; ++row_offset)
+        {
+            for (int col_offset = 0; col_offset < BK; ++col_offset)
+            {
+                c[(row_thread * BK + row_offset) * N + (col_thread * BK) + col_offset] = bt[row_offset * BK + col_offset];
+            }
+        }
+    }
     __global__ void k_check_mat_err(const int M, const int N, const float *a, const float *b, float *c)
     {
         uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -391,11 +460,18 @@ namespace CodeCuda
             code_kernels::k_matmul_bt_row_tile<<<grid, block, BM * BK + BK * BN * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }, kernels);
         
+        add_kernel_launcher("b_tilling_2d", [N, M, K, d_A, d_B, d_C]()
+        {
+            dim3 grid(ceil(double(M)/double(BK * BK)), ceil(double(N)/double(BK * BK)));
+            dim3 block(BK * BK);
+            code_kernels::k_matmul_bt_2d_tilling<<<grid, block, BM * BK + BK * BN * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+        }, kernels);
+        
 
 
         for (int i = 0; i < 5; ++i)
         {
-            kernels.at("b_tilling_col_tile").kernel();
+            kernels.at("b_tilling_2d").kernel();
         }
         Wrappers::C_GetLastError();
         Wrappers::C_DeviceSynchronize();
@@ -403,7 +479,7 @@ namespace CodeCuda
         Wrappers::C_EventRecord(start);
         for (int i = 0; i < runs; ++i)
         {
-            kernels.at("b_tilling_col_tile").kernel();
+            kernels.at("b_tilling_2d").kernel();
         }
         Wrappers::C_GetLastError();
         

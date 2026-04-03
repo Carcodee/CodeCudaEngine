@@ -12,8 +12,8 @@ void TestLib(int M, int N, int K, int runs)
 
     //h_a.Full(1.0);
    // h_b.Full(2.0);
-     h_a.RandInt(1, 5);
-     h_b.RandInt(1, 5);
+     h_a.Rand(1, 5);
+     h_b.Rand(1, 5);
     
     h_c.Full(0.0f);
     
@@ -45,7 +45,7 @@ void TestMatmulShapes()
         MatrixSizes{512, 256, 128},
 //        MatrixSizes{8098, 8098, 8098},
         */
-        MatrixSizes{64, 64, 64},
+        MatrixSizes{128, 128, 128},
         MatrixSizes{4096, 4096, 4096},
         // MatrixSizes{1024, 1024, 1024},
     };
