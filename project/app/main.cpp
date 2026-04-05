@@ -10,7 +10,7 @@ void TestLib(int M, int N, int K, int runs)
     CodeCuda::c_matrix h_b (K, N);
     CodeCuda::c_matrix h_c (M, N);
 
-    //h_a.Full(1.0);
+    // h_a.Full(1.0);
    // h_b.Full(2.0);
      h_a.Rand(1, 5);
      h_b.Rand(1, 5);

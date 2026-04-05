@@ -94,12 +94,13 @@ namespace code_kernels
     }
     
     
-#define BM 64
-#define BK 8
-#define BN 64
     
     __global__ void k_matmul_bt_row_tile(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
     {
+
+        constexpr int BM = 64;
+        constexpr int BK = 8;
+        constexpr int BN = 64;
         //x = rows
         extern __shared__ float smem[];
         
@@ -156,9 +157,13 @@ namespace code_kernels
             }
         
     }
-
+    
     __global__ void k_matmul_bt_col_tile(const int M, const int N, const int K, float alpha, float beta, const float *a, const float *b, float *c)
     {
+        
+        constexpr int BM = 64;
+        constexpr int BK = 8;
+        constexpr int BN = 64;
         //x = rows
         //y = rows
         extern __shared__ float smem[];
@@ -211,6 +216,12 @@ namespace code_kernels
     {
         //x = rows
         //y = rows
+        constexpr uint32_t BM = 64;
+        constexpr uint32_t BK = 8;
+        constexpr uint32_t BN = 64;
+        constexpr uint32_t TM =8;
+        constexpr uint32_t TN =8;
+        
         extern __shared__ float smem[];
         
         float* a_s = smem;
@@ -229,40 +240,48 @@ namespace code_kernels
         b += blockIdx.x * BN;
         c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
 
-        float bt[BK * BK] = {0.0};
+        float bt[TM * TN] = {0.0};
+        float reg_m[TM] = {0.0};
+        float reg_n[TN] = {0.0};
 
         int tile_count = ceilf(float(K) / float(BK));
 
         //keep in mind for this matmul algorithms there is a lot of sizes that need to match
         // in this case is not casuality that BK * BN/BK * BK = 8, that means we can safely jump on 
         //a and b by BM * K and in B by BN
-        uint32_t stride_a = (BK * BM) / (BK * BK);
-        uint32_t stride_b = (BK * BN) / (BK * BK);
+        //this is not fully loading all the smem
         for (int i = 0; i < tile_count; ++i)
         {
-            for (int curr_stride = 0; curr_stride < stride_a; ++curr_stride)
+            for (uint32_t curr_stride = 0; curr_stride < BM; curr_stride += 8)
             {
                 uint32_t stride_row_offset = local_row_a * BK + curr_stride * BK;
-                a_s[stride_row_offset + local_col_a] = a[stride_row_offset * K + local_col_a];
+                a_s[stride_row_offset + local_col_a] = a[(local_row_a + curr_stride) * K + local_col_a];
             }
-            for (int curr_stride = 0; curr_stride < stride_b; ++curr_stride)
+            for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
             {
-                uint32_t stride_col_offset = local_col_b + (curr_stride * BK);
-                b_s[local_row_b * BN + stride_col_offset] = b[(local_row_b * N) + stride_col_offset];
+                uint32_t stride_row_offset = curr_stride * BN;
+                b_s[stride_row_offset + local_col_b] = b[curr_stride * N + local_col_b];
             }
             __syncthreads();
         
             a += BK;
             b += BK * N;
-            for (int j = 0; j < BK; ++j)
+            for (int dot_idx = 0; dot_idx < BK; ++dot_idx)
             {
-                for (int col_index = 0; col_index < BK; ++col_index)
+                for (int reg_row_idx = 0; reg_row_idx < TM; ++reg_row_idx)
                 {
-                    //next: index here good 
-                    // float b_temp = b_s[j * BN  + col_index];
-                    for (int row_index = 0; row_index < BK; ++row_index)
+                    reg_m[reg_row_idx] = a_s[row_thread * TM * TM + reg_row_idx * TM + dot_idx];
+                }
+                for (int reg_col_idx = 0; reg_col_idx < TN; ++reg_col_idx)
+                {
+                    reg_n[reg_col_idx] = b_s[dot_idx * BN + col_thread * TN + reg_col_idx];
+                }
+                for (int reg_n_idx= 0; reg_n_idx < TN; reg_n_idx++)
+                {
+                    for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
                     {
-                        // bt[row_index * BK + j] += b_temp * a_s[row_thread * BK + row_index * BK + j];
+                        //todo
+                        bt[reg_m_idx * TM + reg_n_idx] += reg_m[reg_m_idx] * reg_n[reg_n_idx];
                     }
                 }
             }
@@ -448,6 +467,9 @@ namespace CodeCuda
         
         add_kernel_launcher("b_tilling_col_tile", [N, M, K, d_A, d_B, d_C]()
         {
+            constexpr uint32_t BM = 64;
+            constexpr uint32_t BK = 8;
+            constexpr uint32_t BN = 64;
             dim3 grid(ceil(double(N)/double(BN)), ceil(double(M)/double(BK * BK)));
             dim3 block(BM * BK);
             code_kernels::k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
@@ -455,16 +477,23 @@ namespace CodeCuda
         
         add_kernel_launcher("b_tilling_row_tile", [N, M, K, d_A, d_B, d_C]()
         {
+            
+            constexpr uint32_t BM = 64;
+            constexpr uint32_t BK = 8;
+            constexpr uint32_t BN = 64;
             dim3 grid(ceil(double(M)/double(BM)), ceil(double(N)/double(BK * BK)));
             dim3 block(BM * BK);
-            code_kernels::k_matmul_bt_row_tile<<<grid, block, BM * BK + BK * BN * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            code_kernels::k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }, kernels);
         
         add_kernel_launcher("b_tilling_2d", [N, M, K, d_A, d_B, d_C]()
         {
+            constexpr uint32_t BM = 64;
+            constexpr uint32_t BK = 8;
+            constexpr uint32_t BN = 64;
             dim3 grid(ceil(double(M)/double(BK * BK)), ceil(double(N)/double(BK * BK)));
             dim3 block(BK * BK);
-            code_kernels::k_matmul_bt_2d_tilling<<<grid, block, BM * BK + BK * BN * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            code_kernels::k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
         }, kernels);
         
 
