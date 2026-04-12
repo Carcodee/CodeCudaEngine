@@ -45,9 +45,9 @@ void TestMatmulShapes()
         MatrixSizes{512, 256, 128},
 //        MatrixSizes{8098, 8098, 8098},
         */
-        MatrixSizes{128, 128, 128},
-        MatrixSizes{4096, 4096, 4096},
-        // MatrixSizes{1024, 1024, 1024},
+        // MatrixSizes{128, 128, 128},
+        // MatrixSizes{4096, 4096, 4096},
+        MatrixSizes{1024, 1024, 1024},
     };
     for (auto& size : sizes)
     {
@@ -62,7 +62,7 @@ int main()
     CodeCuda::C_Init();
     TestMatmulShapes();
     CodeCuda::C_Shutdown();
-    while (true)
-    {
-    }
+    // while (true)
+    // {
+    // }
 }

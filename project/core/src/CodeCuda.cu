@@ -304,7 +304,7 @@ namespace code_kernels
     }
 
     __global__ void k_matmul_bt_2d_tilling_transposed_a(const int M, const int N, const int K, float alpha, float beta,
-                                                        const float *a, const float *b, float *c)
+                                                        float *a, float *b, float *c)
     {
         // x = rows
         // y = rows
@@ -343,11 +343,22 @@ namespace code_kernels
         // a and b by BM * K and in B by BN
         for (int i = 0; i < tile_count; ++i)
         {
-            for (uint32_t curr_stride = 0; curr_stride < BM; curr_stride += 8)
-            {
-                //transpose A for vectorized loads on the outer product
-                a_s[local_col_a * BM + local_row_a] = a[(local_row_a + curr_stride) * K + local_col_a];
-            }
+            
+            float4* a_buff = reinterpret_cast<float4 *>(&a[(threadIdx.x) * K]);
+            float4 temp_a_1 = a_buff[0];
+            float4 temp_a_2 = a_buff[1];
+            
+            //transpose A for vectorized loads on the outer product
+            a_s[0 * BM + threadIdx.x] = temp_a_1.x;
+            a_s[1 * BM + threadIdx.x] = temp_a_1.y;
+            a_s[2 * BM + threadIdx.x] = temp_a_1.z;
+            a_s[3 * BM + threadIdx.x] = temp_a_1.w;
+            a_s[4 * BM + threadIdx.x] = temp_a_2.x;
+            a_s[5 * BM + threadIdx.x] = temp_a_2.y;
+            a_s[6 * BM + threadIdx.x] = temp_a_2.z;
+            a_s[7 * BM + threadIdx.x] = temp_a_2.w;
+            //
+            //
             for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
             {
                 uint32_t stride_row_offset = curr_stride * BN;
@@ -359,9 +370,9 @@ namespace code_kernels
             b += BK * N;
             for (int dot_idx = 0; dot_idx < BK; ++dot_idx)
             {
-                for (int reg_row_idx = 0; reg_row_idx < TM; ++reg_row_idx)
+                for (int reg_col_idx = 0; reg_col_idx < TM; ++reg_col_idx)
                 {
-                    reg_m[reg_row_idx] = a_s[row_thread * TM * TM + reg_row_idx * TM + dot_idx];
+                    reg_m[reg_col_idx] = a_s[dot_idx * BM + row_thread * TM + reg_col_idx];
                 }
                 for (int reg_col_idx = 0; reg_col_idx < TN; ++reg_col_idx)
                 {
@@ -382,8 +393,197 @@ namespace code_kernels
         {
             for (int col_offset = 0; col_offset < BK; ++col_offset)
             {
-                c[(row_thread * BK + row_offset) * N + (col_thread * BK) + col_offset] =
-                    bt[row_offset * BK + col_offset];
+                c[(row_thread * BK + row_offset) * N + (col_thread * BK) + col_offset] =bt[row_offset * BK + col_offset];
+            }
+        }
+    }
+    
+    __global__ void k_matmul_bt_2d_auto_tunning(const int M, const int N, const int K, float alpha, float beta,
+                                                        float *a, float *b, float *c)
+    {
+        // x = rows
+        // y = rows
+        constexpr uint32_t BM = 64;
+        constexpr uint32_t BK = 8;
+        constexpr uint32_t BN = 64;
+        constexpr uint32_t TM = 8;
+        constexpr uint32_t TN = 8;
+
+        extern __shared__ float smem[];
+
+        float *a_s = smem;
+        float *b_s = smem + (BM * BK);
+
+        uint32_t row_thread = threadIdx.x / BK;
+        uint32_t col_thread = threadIdx.x % BK;
+
+        uint32_t local_row_a = (threadIdx.x / BK);
+        uint32_t local_col_a = (threadIdx.x % BK);
+
+        uint32_t local_row_b = (threadIdx.x / BN);
+        uint32_t local_col_b = (threadIdx.x % BN);
+
+        a += blockIdx.y * BM * K;
+        b += blockIdx.x * BN;
+        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+
+        float bt[TM * TN] = {0.0};
+        float reg_m[TM] = {0.0};
+        float reg_n[TN] = {0.0};
+
+        int tile_count = ceilf(float(K) / float(BK));
+
+        // keep in mind for this matmul algorithms there is a lot of sizes that need to match
+        //  in this case is not casuality that BK * BN/BK * BK = 8, that means we can safely jump on
+        // a and b by BM * K and in B by BN
+        for (int i = 0; i < tile_count; ++i)
+        {
+            
+            float4* a_buff = reinterpret_cast<float4 *>(&a[(threadIdx.x) * K]);
+            float4 temp_a_1 = a_buff[0];
+            float4 temp_a_2 = a_buff[1];
+            
+            //transpose A for vectorized loads on the outer product
+            a_s[0 * BM + threadIdx.x] = temp_a_1.x;
+            a_s[1 * BM + threadIdx.x] = temp_a_1.y;
+            a_s[2 * BM + threadIdx.x] = temp_a_1.z;
+            a_s[3 * BM + threadIdx.x] = temp_a_1.w;
+            a_s[4 * BM + threadIdx.x] = temp_a_2.x;
+            a_s[5 * BM + threadIdx.x] = temp_a_2.y;
+            a_s[6 * BM + threadIdx.x] = temp_a_2.z;
+            a_s[7 * BM + threadIdx.x] = temp_a_2.w;
+            //
+            //
+            for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
+            {
+                uint32_t stride_row_offset = curr_stride * BN;
+                b_s[stride_row_offset + local_col_b] = b[curr_stride * N + local_col_b];
+            }
+            __syncthreads();
+
+            a += BK;
+            b += BK * N;
+            for (int dot_idx = 0; dot_idx < BK; ++dot_idx)
+            {
+                for (int reg_col_idx = 0; reg_col_idx < TM; ++reg_col_idx)
+                {
+                    reg_m[reg_col_idx] = a_s[dot_idx * BM + row_thread * TM + reg_col_idx];
+                }
+                for (int reg_col_idx = 0; reg_col_idx < TN; ++reg_col_idx)
+                {
+                    reg_n[reg_col_idx] = b_s[dot_idx * BN + col_thread * TN + reg_col_idx];
+                }
+                for (int reg_n_idx = 0; reg_n_idx < TN; reg_n_idx++)
+                {
+                    for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
+                    {
+                        // todo
+                        bt[reg_m_idx * TM + reg_n_idx] += reg_m[reg_m_idx] * reg_n[reg_n_idx];
+                    }
+                }
+            }
+            __syncthreads();
+        }
+        for (int row_offset = 0; row_offset < BK; ++row_offset)
+        {
+            for (int col_offset = 0; col_offset < BK; ++col_offset)
+            {
+                c[(row_thread * BK + row_offset) * N + (col_thread * BK) + col_offset] =bt[row_offset * BK + col_offset];
+            }
+        }
+    }
+    
+    __global__ void k_matmul_bt_warp_tilling(const int M, const int N, const int K, float alpha, float beta,
+                                                        float *a, float *b, float *c)
+    {
+        // x = rows
+        // y = rows
+        constexpr uint32_t BM = 64;
+        constexpr uint32_t BK = 8;
+        constexpr uint32_t BN = 64;
+        constexpr uint32_t TM = 8;
+        constexpr uint32_t TN = 8;
+
+        extern __shared__ float smem[];
+
+        float *a_s = smem;
+        float *b_s = smem + (BM * BK);
+
+        uint32_t row_thread = threadIdx.x / BK;
+        uint32_t col_thread = threadIdx.x % BK;
+
+        uint32_t local_row_a = (threadIdx.x / BK);
+        uint32_t local_col_a = (threadIdx.x % BK);
+
+        uint32_t local_row_b = (threadIdx.x / BN);
+        uint32_t local_col_b = (threadIdx.x % BN);
+
+        a += blockIdx.y * BM * K;
+        b += blockIdx.x * BN;
+        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+
+        float bt[TM * TN] = {0.0};
+        float reg_m[TM] = {0.0};
+        float reg_n[TN] = {0.0};
+
+        int tile_count = ceilf(float(K) / float(BK));
+
+        // keep in mind for this matmul algorithms there is a lot of sizes that need to match
+        //  in this case is not casuality that BK * BN/BK * BK = 8, that means we can safely jump on
+        // a and b by BM * K and in B by BN
+        for (int i = 0; i < tile_count; ++i)
+        {
+            
+            float4* a_buff = reinterpret_cast<float4 *>(&a[(threadIdx.x) * K]);
+            float4 temp_a_1 = a_buff[0];
+            float4 temp_a_2 = a_buff[1];
+            
+            //transpose A for vectorized loads on the outer product
+            a_s[0 * BM + threadIdx.x] = temp_a_1.x;
+            a_s[1 * BM + threadIdx.x] = temp_a_1.y;
+            a_s[2 * BM + threadIdx.x] = temp_a_1.z;
+            a_s[3 * BM + threadIdx.x] = temp_a_1.w;
+            a_s[4 * BM + threadIdx.x] = temp_a_2.x;
+            a_s[5 * BM + threadIdx.x] = temp_a_2.y;
+            a_s[6 * BM + threadIdx.x] = temp_a_2.z;
+            a_s[7 * BM + threadIdx.x] = temp_a_2.w;
+            //
+            //
+            for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
+            {
+                uint32_t stride_row_offset = curr_stride * BN;
+                b_s[stride_row_offset + local_col_b] = b[curr_stride * N + local_col_b];
+            }
+            __syncthreads();
+
+            a += BK;
+            b += BK * N;
+            for (int dot_idx = 0; dot_idx < BK; ++dot_idx)
+            {
+                for (int reg_col_idx = 0; reg_col_idx < TM; ++reg_col_idx)
+                {
+                    reg_m[reg_col_idx] = a_s[dot_idx * BM + row_thread * TM + reg_col_idx];
+                }
+                for (int reg_col_idx = 0; reg_col_idx < TN; ++reg_col_idx)
+                {
+                    reg_n[reg_col_idx] = b_s[dot_idx * BN + col_thread * TN + reg_col_idx];
+                }
+                for (int reg_n_idx = 0; reg_n_idx < TN; reg_n_idx++)
+                {
+                    for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
+                    {
+                        // todo
+                        bt[reg_m_idx * TM + reg_n_idx] += reg_m[reg_m_idx] * reg_n[reg_n_idx];
+                    }
+                }
+            }
+            __syncthreads();
+        }
+        for (int row_offset = 0; row_offset < BK; ++row_offset)
+        {
+            for (int col_offset = 0; col_offset < BK; ++col_offset)
+            {
+                c[(row_thread * BK + row_offset) * N + (col_thread * BK) + col_offset] =bt[row_offset * BK + col_offset];
             }
         }
     }
