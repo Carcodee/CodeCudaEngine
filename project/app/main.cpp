@@ -45,8 +45,8 @@ void TestMatmulShapes()
         MatrixSizes{512, 256, 128},
 //        MatrixSizes{8098, 8098, 8098},
         */
-        // MatrixSizes{128, 128, 128},
-        // MatrixSizes{4096, 4096, 4096},
+        MatrixSizes{128, 128, 128},
+        MatrixSizes{4096, 4096, 4096},
         MatrixSizes{1024, 1024, 1024},
     };
     for (auto& size : sizes)
@@ -57,12 +57,51 @@ void TestMatmulShapes()
     }
     
 }
+
+void Swap(std::vector<int>& list, int idx_1, int idx_2)
+{
+    int temp = list[idx_1];
+    list[idx_1] = list[idx_2];
+    list[idx_2] = temp;
+}
+void TwoPointerSort(std::vector<int>& list, int left_min, int left_max, int right_min, int right_max)
+{
+    int cur_left = left_min;
+    int cur_right = right_max;
+    while (cur_left < left_max || cur_right < right_max)
+    {
+        if (list[cur_right] < list[cur_left])
+        {
+            Swap(list, cur_right, cur_left);
+            cur_right++;
+        }else
+        {
+            cur_left++;
+        }
+    }
+}
+
+int MergeSort(std::vector<int>& list, int min, int max)
+{
+    if (min == max)
+    {
+        return min;
+    }
+    int new_max =min + (max - min / 2);
+    int start_left = MergeSort(list, min, new_max);
+    int start_right = MergeSort(list, new_max + 1, max);
+    //sort
+    TwoPointerSort(list, start_left, new_max, start_right, max);
+    
+    return min;
+    
+}
 int main()
 {
     CodeCuda::C_Init();
     TestMatmulShapes();
     CodeCuda::C_Shutdown();
-    // while (true)
-    // {
-    // }
+    while (true)
+    {
+    }
 }

@@ -187,7 +187,7 @@ namespace code_kernels
 
         a += blockIdx.y * BM * K;
         b += blockIdx.x * BN;
-        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+        c += (blockIdx.y * BM * N) + (blockIdx.x * BN);
 
         float bt[BK] = {0.0};
 
@@ -244,7 +244,7 @@ namespace code_kernels
 
         a += blockIdx.y * BM * K;
         b += blockIdx.x * BN;
-        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+        c += (blockIdx.y * BM * N) + (blockIdx.x * BN);
 
         float bt[TM * TN] = {0.0};
         float reg_m[TM] = {0.0};
@@ -322,15 +322,11 @@ namespace code_kernels
         uint32_t row_thread = threadIdx.x / BK;
         uint32_t col_thread = threadIdx.x % BK;
 
-        uint32_t local_row_a = (threadIdx.x / BK);
-        uint32_t local_col_a = (threadIdx.x % BK);
-
-        uint32_t local_row_b = (threadIdx.x / BN);
         uint32_t local_col_b = (threadIdx.x % BN);
 
         a += blockIdx.y * BM * K;
         b += blockIdx.x * BN;
-        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+        c += (blockIdx.y * BM * N) + (blockIdx.x * BN);
 
         float bt[TM * TN] = {0.0};
         float reg_m[TM] = {0.0};
@@ -382,7 +378,6 @@ namespace code_kernels
                 {
                     for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
                     {
-                        // todo
                         bt[reg_m_idx * TM + reg_n_idx] += reg_m[reg_m_idx] * reg_n[reg_n_idx];
                     }
                 }
@@ -425,7 +420,7 @@ namespace code_kernels
 
         a += blockIdx.y * BM * K;
         b += blockIdx.x * BN;
-        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+        c += (blockIdx.y * BM * N) + (blockIdx.x * BN);
 
         float bt[TM * TN] = {0.0};
         float reg_m[TM] = {0.0};
@@ -498,42 +493,62 @@ namespace code_kernels
     {
         // x = rows
         // y = rows
-        constexpr uint32_t BM = 64;
+        constexpr uint32_t WSIZE = 32;
+        constexpr uint32_t BM = 128;
         constexpr uint32_t BK = 8;
-        constexpr uint32_t BN = 64;
-        constexpr uint32_t TM = 8;
-        constexpr uint32_t TN = 8;
+        constexpr uint32_t BN = 128;
+        
+        constexpr uint32_t TN = 2;
+        constexpr uint32_t TM = 2;
+        
+        constexpr uint32_t WN = 64;
+        constexpr uint32_t WM = 64;
+        constexpr uint32_t WK = 4;
+        
+        //number of subtiles calculated per thread
 
         extern __shared__ float smem[];
 
         float *a_s = smem;
         float *b_s = smem + (BM * BK);
 
-        uint32_t row_thread = threadIdx.x / BK;
-        uint32_t col_thread = threadIdx.x % BK;
-
-        uint32_t local_row_a = (threadIdx.x / BK);
-        uint32_t local_col_a = (threadIdx.x % BK);
-
-        uint32_t local_row_b = (threadIdx.x / BN);
-        uint32_t local_col_b = (threadIdx.x % BN);
+        
+        uint32_t warp_id = threadIdx.x / WSIZE;
+        uint32_t lane_id = threadIdx.x % WSIZE;
+        
+        uint32_t warp_row = warp_id / (BN / WN);
+        uint32_t warp_col = warp_id % (BN / WN);
+        
+        //8
+        uint32_t entries_per_thread = WN * WK / WSIZE;
+        
+        uint32_t SUB_TILE_COUNT_N = 2;
+        uint32_t SUB_TILE_COUNT_M = 2;
+        uint32_t SUB_TILE_COUNT_K = 1;
+        
 
         a += blockIdx.y * BM * K;
         b += blockIdx.x * BN;
-        c += (blockIdx.y * BM * K) + (blockIdx.x * BN);
+        c += ((blockIdx.y * BM + warp_row * WM) * N) + (blockIdx.x * BN) + (warp_col * WN);
 
-        float bt[TM * TN] = {0.0};
-        float reg_m[TM] = {0.0};
-        float reg_n[TN] = {0.0};
+        float thread_results[TM * TN * SUB_TILE_COUNT_N * SUB_TILE_COUNT_M] = {0.0};
+        // float reg_m[TM * WSUB_TM] = {0.0};
+        // float reg_n[TN * WSUB_TN] = {0.0};
 
         int tile_count = ceilf(float(K) / float(BK));
 
-        // keep in mind for this matmul algorithms there is a lot of sizes that need to match
-        //  in this case is not casuality that BK * BN/BK * BK = 8, that means we can safely jump on
-        // a and b by BM * K and in B by BN
+        // int a_col_stride = BK / (BS / BM); // = 4 jumps by 4 after 64 threads
+        // int a_col_idx = threadIdx.x % 2;
+        // int a_row_idx = threadIdx.x % BM;
         for (int i = 0; i < tile_count; ++i)
         {
-            
+            // transpose A for vectorized loads on the outer product
+            // float4 *a_buff = reinterpret_cast<float4 *>(&a[a_row_idx * K + a_col_idx * a_col_stride]);
+            // float4 temp_a_1 = a_buff[0];
+            // a_s[(a_col_idx * a_col_stride + 0) * BM + a_row_idx] = temp_a_1.x;
+            // a_s[(a_col_idx * a_col_stride + 1) * BM + a_row_idx] = temp_a_1.y;
+            // a_s[(a_col_idx * a_col_stride + 2) * BM + a_row_idx] = temp_a_1.z;
+            // a_s[(a_col_idx * a_col_stride + 3) * BM + a_row_idx] = temp_a_1.w;
             float4* a_buff = reinterpret_cast<float4 *>(&a[(threadIdx.x) * K]);
             float4 temp_a_1 = a_buff[0];
             float4 temp_a_2 = a_buff[1];
@@ -552,7 +567,7 @@ namespace code_kernels
             for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
             {
                 uint32_t stride_row_offset = curr_stride * BN;
-                b_s[stride_row_offset + local_col_b] = b[curr_stride * N + local_col_b];
+                    b_s[stride_row_offset + threadIdx.x] = b[curr_stride * N + threadIdx.x];
             }
             __syncthreads();
 
@@ -560,33 +575,29 @@ namespace code_kernels
             b += BK * N;
             for (int dot_idx = 0; dot_idx < BK; ++dot_idx)
             {
-                for (int reg_col_idx = 0; reg_col_idx < TM; ++reg_col_idx)
-                {
-                    reg_m[reg_col_idx] = a_s[dot_idx * BM + row_thread * TM + reg_col_idx];
-                }
-                for (int reg_col_idx = 0; reg_col_idx < TN; ++reg_col_idx)
-                {
-                    reg_n[reg_col_idx] = b_s[dot_idx * BN + col_thread * TN + reg_col_idx];
-                }
-                for (int reg_n_idx = 0; reg_n_idx < TN; reg_n_idx++)
-                {
-                    for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
-                    {
-                        // todo
-                        bt[reg_m_idx * TM + reg_n_idx] += reg_m[reg_m_idx] * reg_n[reg_n_idx];
-                    }
-                }
+                
             }
             __syncthreads();
         }
-        for (int row_offset = 0; row_offset < BK; ++row_offset)
+
+
+        for (int w_sub_row_idx = 0; w_sub_row_idx < SUB_TILE_COUNT_N; ++w_sub_row_idx)
         {
-            for (int col_offset = 0; col_offset < BK; ++col_offset)
+            for (int w_sub_col_idx = 0; w_sub_col_idx < SUB_TILE_COUNT_M; ++w_sub_col_idx)
             {
-                c[(row_thread * BK + row_offset) * N + (col_thread * BK) + col_offset] =bt[row_offset * BK + col_offset];
+                for (int res_m_idx = 0; res_m_idx < TM; ++res_m_idx)
+                {
+                    for (int res_n_idx = 0; res_n_idx < TN; ++res_n_idx)
+                    {
+                        thread_results[]
+                        
+                        
+                    }
+                }
             }
         }
     }
+        
     __global__ void k_check_mat_err(const int M, const int N, const float *a, const float *b, float *c)
     {
         uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -819,11 +830,27 @@ namespace CodeCuda
                     M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
             },
             kernels);
+        
+        add_kernel_launcher(
+            "warp_tilling",
+            [N, M, K, d_A, d_B, d_C]()
+            {
+                constexpr uint32_t BM = 64;
+                constexpr uint32_t BK = 8;
+                constexpr uint32_t BN = 128;
+                constexpr uint32_t B_SIZE = 128;
+                
+                dim3 grid(ceil(double(M) / double(BM)), ceil(double(N) / double(BN)));
+                dim3 block(B_SIZE);
+                code_kernels::k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
+                    M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+            },
+            kernels);
 
 
         for (int i = 0; i < 5; ++i)
         {
-            kernels.at("b_tilling_2d_transposed").kernel();
+            kernels.at("warp_tilling").kernel();
         }
         Wrappers::C_GetLastError();
         Wrappers::C_DeviceSynchronize();
@@ -831,7 +858,7 @@ namespace CodeCuda
         Wrappers::C_EventRecord(start);
         for (int i = 0; i < runs; ++i)
         {
-            kernels.at("b_tilling_2d_transposed").kernel();
+            kernels.at("warp_tilling").kernel();
         }
         Wrappers::C_GetLastError();
 
