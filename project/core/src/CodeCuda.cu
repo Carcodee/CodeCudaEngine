@@ -494,17 +494,30 @@ namespace code_kernels
     {
         // x = rows
         // y = rows
-        constexpr uint32_t WSIZE = 32;
+        constexpr uint32_t WARP_SIZE = 32;
         constexpr uint32_t BM = 128;
         constexpr uint32_t BK = 8;
         constexpr uint32_t BN = 128;
+        constexpr uint32_t WARP_COUNT = 128 / WARP_SIZE;
 
+        constexpr uint32_t WARP_COLS = 2;
+        constexpr uint32_t WARP_ROWS = WARP_COUNT / WARP_COLS; // 2
+        
+        constexpr uint32_t W_SUB_TILE_COUNT_M = 2;
+        constexpr uint32_t W_SUB_TILE_COUNT_N = 2;
+        
         constexpr uint32_t TN = 2;
         constexpr uint32_t TM = 2;
+        constexpr uint32_t TK = 2;
+        
 
-        constexpr uint32_t WN = 64;
-        constexpr uint32_t WM = 64;
-        constexpr uint32_t WK = 4;
+        constexpr uint32_t WM = BM / WARP_ROWS; // 64
+        constexpr uint32_t WN = BN / WARP_ROWS; // 64
+        constexpr uint32_t WK = BK / WARP_COLS; // 4
+        
+        constexpr uint32_t WARP_THREAD_COUNT_M = WM / (TM * W_SUB_TILE_COUNT_M); // 16
+        constexpr uint32_t WARP_THREAD_COUNT_N = WN / (TM * W_SUB_TILE_COUNT_N); // 16
+        constexpr uint32_t WARP_THREAD_COUNT_K =WARP_SIZE / WARP_THREAD_COUNT_M; // 2 
 
         // number of subtiles calculated per thread
 
@@ -514,25 +527,21 @@ namespace code_kernels
         float *b_s = smem + (BM * BK);
 
 
-        uint32_t warp_id = threadIdx.x / WSIZE;
-        uint32_t lane_id = threadIdx.x % WSIZE;
+        uint32_t warp_id = threadIdx.x / WARP_SIZE;
+        uint32_t lane_id = threadIdx.x % WARP_SIZE;
 
-        uint32_t lane_col = lane_id % 16;
-        uint32_t lane_row = lane_id / 16;
-
-        uint32_t warp_row = warp_id / (BN / WN);
-        uint32_t warp_col = warp_id % (BN / WN);
+        uint32_t warp_row = warp_id / WARP_COLS;
+        uint32_t warp_col = warp_id % WARP_COLS;
 
         // 8
-        constexpr uint32_t SUB_TILE_COUNT_N = 2;
-        constexpr uint32_t SUB_TILE_COUNT_M = 2;
-
 
         a += blockIdx.y * BM * K;
         b += blockIdx.x * BN;
-        c += ((blockIdx.y * BM + warp_row * WM) * N) + (blockIdx.x * BN) + (warp_col * WN);
+        //warp results offset in rows 4 thread results in rows x 16 lane rows = 64 row stride
+        //warp results offset in cols 4 thread results in columns x 2 lane cols = 8 col stride
+        c += (blockIdx.y * BM * N + warp_row * WARP_THREAD_COUNT_M * W_SUB_TILE_COUNT_M * TM * N) + (blockIdx.x * BN) + (warp_col * WARP_THREAD_COUNT_K * TK * W_SUB_TILE_COUNT_N); 
 
-        float thread_results[TM * TN * SUB_TILE_COUNT_N * SUB_TILE_COUNT_M] = {1.0};
+        float thread_results[TM * TN * W_SUB_TILE_COUNT_M * W_SUB_TILE_COUNT_N] = {1.0};
         // float reg_m[TM * TM] = {0.0};
         // float reg_n[TN * TN] = {0.0};
 
@@ -605,9 +614,10 @@ namespace code_kernels
         }
 
 
-        for (int w_tile_row_idx = 0; w_tile_row_idx < SUB_TILE_COUNT_M; ++w_tile_row_idx)
+        c[0] = 1.0f;
+        for (int w_tile_row_idx = 0; w_tile_row_idx < W_SUB_TILE_COUNT_M; ++w_tile_row_idx)
         {
-            for (int w_tile_col_idx = 0; w_tile_col_idx < SUB_TILE_COUNT_N; ++w_tile_col_idx)
+            for (int w_tile_col_idx = 0; w_tile_col_idx < W_SUB_TILE_COUNT_N; ++w_tile_col_idx)
             {
                 float* c_ref = c;
                 c_ref+= w_tile_row_idx * TM * N + w_tile_col_idx * TM;
@@ -617,7 +627,7 @@ namespace code_kernels
                     {
                         // thread_results[(w_tile_row_idx * SUB_TILE_COUNT_M * TM + w_tile_col_idx * TN) + sub_tile_row_idx * TM +
                         //                sub_tile_col_idx]
-                        c_ref[sub_tile_row_idx * TM + sub_tile_col_idx] = 1.0f;
+                        // c_ref[sub_tile_row_idx * TM + sub_tile_col_idx] = 1.0f;
                     }
                 }
             }
@@ -867,7 +877,7 @@ namespace CodeCuda
                 constexpr uint32_t B_SIZE = 128;
                 constexpr uint32_t T_RESULTS = 4;
 
-                dim3 grid(ceil(double(M) / double(B_SIZE * T_RESULTS)), ceil(double(N) / double(B_SIZE * T_RESULTS)));
+                dim3 grid(ceil(double(M) / double(16 * T_RESULTS)), ceil(double(N) / double(2 * T_RESULTS)));
                 dim3 block(B_SIZE);
                 code_kernels::k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
                     M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);

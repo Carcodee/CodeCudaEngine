@@ -113,17 +113,28 @@ namespace CodeCuda{
                     }
                     continue;
                 }
-
-                if (col > 0 && !skipped_cols)
+                
+                if (col > 0)
                 {
-                    output << "  ";
+                    output << " ";
                 }
-                if (col > 0 && skipped_cols)
+                
+                if (skipped_cols)
                 {
-                    output << "  ";
                     skipped_cols = false;
                 }
-                output << std::setw(cell_width) << FormatMatrixValue(data[row * N + col]);
+                
+                output << FormatMatrixValue(data[row * N + col]);
+                // if (col > 0 && !skipped_cols)
+                // {
+                //     output << "  ";
+                // }
+                // if (col > 0 && skipped_cols)
+                // {
+                //     output << "  ";
+                //     skipped_cols = false;
+                // }
+                // output << std::setw(cell_width) << FormatMatrixValue(data[row * N + col]);
             }
             output << " ]\n";
         }
