@@ -12,8 +12,8 @@ void TestLib(int M, int N, int K, int runs)
 
     // h_a.Full(1.0);
    // h_b.Full(2.0);
-     h_a.Rand(1, 5);
-     h_b.Rand(1, 5);
+     h_a.RandInt(10, 50);
+     h_b.RandInt(10, 50);
     
     h_c.Full(0.0f);
     
@@ -36,18 +36,18 @@ void TestMatmulShapes()
     
 
     std::vector<MatrixSizes> sizes = {
-        /*
-        MatrixSizes{4, 8, 4},
-        MatrixSizes{256, 28, 256},
-        MatrixSizes{128, 28, 256},
-        MatrixSizes{256, 28, 128},
-        MatrixSizes{128, 256, 512},
-        MatrixSizes{512, 256, 128},
-//        MatrixSizes{8098, 8098, 8098},
-        */
+//         /*
+//         MatrixSizes{4, 8, 4},
+//         MatrixSizes{256, 28, 256},
+//         MatrixSizes{128, 28, 256},
+//         MatrixSizes{256, 28, 128},
+//         MatrixSizes{128, 256, 512},
+//         MatrixSizes{512, 256, 128},
+//         */
         MatrixSizes{128, 128, 128},
-        // MatrixSizes{4096, 4096, 4096},
-        // MatrixSizes{1024, 1024, 1024},
+        MatrixSizes{1024, 1024, 1024},
+        MatrixSizes{4096, 4096, 4096},
+        MatrixSizes{8192, 8192, 8192},
     };
     for (auto& size : sizes)
     {

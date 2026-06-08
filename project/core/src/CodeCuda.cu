@@ -491,44 +491,80 @@ namespace code_kernels
         // we place c on the warp block
         c += (blockIdx.y * BM * N + blockIdx.x * BN) + (warp_row * WM * N + warp_col * WN);
 
-        float thread_results[TM * TN * WMITER * WNITER] = {1.0};
+        float thread_results[TM * TN * WMITER * WNITER] = {0.0};
         float reg_m[TM * WMITER] = {0.0};
         float reg_n[TN * WNITER] = {0.0};
 
-        int tile_count = ceilf(float(K) / float(BK));
+        uint32_t tile_count = ceilf(float(K) / float(BK));
+
+        constexpr uint32_t BM_COLS = BSIZE / BM;
+        constexpr uint32_t a_col_offset = BK / BM_COLS;
+
+        uint32_t a_col = threadIdx.x % BM_COLS;
+        uint32_t a_row = threadIdx.x / BM_COLS;
+
 
         for (int i = 0; i < tile_count; ++i)
         {
             // // transpose A for vectorized loads on the outer product
-            // float4 *a_buff = reinterpret_cast<float4 *>(&a[(threadIdx.x) * K]);
-            // float4 temp_a_1 = a_buff[0];
-            // float4 temp_a_2 = a_buff[1];
+            float4 *a_buff = reinterpret_cast<float4 *>(&a[a_row * K + a_col * a_col_offset]);
+            float4 temp_a_1 = a_buff[0];
             //
             // // transpose A for vectorized loads on the outer product
-            // a_s[0 * BM + threadIdx.x] = temp_a_1.x;
-            // a_s[1 * BM + threadIdx.x] = temp_a_1.y;
-            // a_s[2 * BM + threadIdx.x] = temp_a_1.z;
-            // a_s[3 * BM + threadIdx.x] = temp_a_1.w;
-            // a_s[4 * BM + threadIdx.x] = temp_a_2.x;
-            // a_s[5 * BM + threadIdx.x] = temp_a_2.y;
-            // a_s[6 * BM + threadIdx.x] = temp_a_2.z;
-            // a_s[7 * BM + threadIdx.x] = temp_a_2.w;
-            // //
-            // //
-            // for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
-            // {
-            //     uint32_t stride_row_offset = curr_stride * BN;
-            //     b_s[stride_row_offset + threadIdx.x] = b[curr_stride * N + threadIdx.x];
-            // }
-            // __syncthreads();
+            a_s[(a_col * a_col_offset + 0) * BM + a_row] = temp_a_1.x;
+            a_s[(a_col * a_col_offset + 1) * BM + a_row] = temp_a_1.y;
+            a_s[(a_col * a_col_offset + 2) * BM + a_row] = temp_a_1.z;
+            a_s[(a_col * a_col_offset + 3) * BM + a_row] = temp_a_1.w;
+
+            for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
+            {
+                uint32_t stride_row_offset = curr_stride * BN;
+                b_s[stride_row_offset + threadIdx.x] = b[curr_stride * N + threadIdx.x];
+            }
+            __syncthreads();
 
             a += BK;
             b += BK * N;
-            for (int dot_idx = 0; dot_idx < TM; ++dot_idx)
+
+            for (int dot_idx = 0; dot_idx < BK; ++dot_idx)
             {
+                for (int wm_iter_idx = 0; wm_iter_idx < WMITER; ++wm_iter_idx)
+                {
+                    for (int tm_idx = 0; tm_idx < TM; ++tm_idx)
+                    {
+                        reg_m[TM * wm_iter_idx + tm_idx] =
+                            a_s[(dot_idx * BM) + (warp_row * WM) + (WSUBM * wm_iter_idx) + (TM * thread_row_in_warp) + tm_idx];
+                    }
+                }
+
+                for (int wn_iter_idx = 0; wn_iter_idx < WNITER; ++wn_iter_idx)
+                {
+                    for (int tn_idx = 0; tn_idx < TN; ++tn_idx)
+                    {
+                        reg_n[TN * wn_iter_idx + tn_idx] =
+                            b_s[(dot_idx * BN) + (warp_col * WN) + (WSUBN * wn_iter_idx) + (TN * thread_col_in_warp) + tn_idx];
+                    }
+                }
+
+                for (int wm_iter_idx = 0; wm_iter_idx < WMITER; ++wm_iter_idx)
+                {
+                    for (int wn_iter_idx = 0; wn_iter_idx < WNITER; ++wn_iter_idx)
+                    {
+                        for (int reg_n_idx = 0; reg_n_idx < TN; ++reg_n_idx)
+                        {
+                            for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
+                            {
+                                thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TN * reg_m_idx) + (TN * wn_iter_idx) + reg_n_idx] += 
+                                    reg_m[TM * wm_iter_idx + reg_m_idx] * reg_n[TN * wn_iter_idx + reg_n_idx];
+                            }
+                        }
+                    }
+                }
             }
+
             __syncthreads();
         }
+
 
         for (int wm_iter_idx = 0; wm_iter_idx < WMITER; ++wm_iter_idx)
         {
@@ -541,8 +577,9 @@ namespace code_kernels
                     for (int tn_idx = 0; tn_idx < TN; ++tn_idx)
                     {
                         // vectorized loads for c+ tm_idx * N + tn_idx
-                        c_temp[(TN * thread_col_in_warp) + (thread_row_in_warp * TM * N) + tm_idx * N + tn_idx] = thread_col_in_warp;
-                            // (WNITER * TN * TM * wm_iter_idx) + (TN * wn_iter_idx) + TN * tm_idx + tn_idx;
+                        c_temp[(thread_row_in_warp * TM * N) + (TN * thread_col_in_warp) + tm_idx * N + tn_idx] =
+                            thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) + (TN * wn_iter_idx) + tn_idx];
+                        // ;
                     }
                 }
             }
