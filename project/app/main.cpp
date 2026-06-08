@@ -21,8 +21,8 @@ void TestLib(int M, int N, int K, int runs)
     CodeCuda::C_Matmul_Test(M, N, K, h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data(), runs);
 
     if (M <= 256)
-    {   //h_b.Print();
-        h_c.Print(true);
+    {   
+        h_c.Print(true, false);
     }
 }
 void TestMatmulShapes()
@@ -55,45 +55,6 @@ void TestMatmulShapes()
         TestLib(size.M, size.N, size.K, 1);
         printf("\n\n");
     }
-    
-}
-
-void Swap(std::vector<int>& list, int idx_1, int idx_2)
-{
-    int temp = list[idx_1];
-    list[idx_1] = list[idx_2];
-    list[idx_2] = temp;
-}
-void TwoPointerSort(std::vector<int>& list, int left_min, int left_max, int right_min, int right_max)
-{
-    int cur_left = left_min;
-    int cur_right = right_max;
-    while (cur_left < left_max || cur_right < right_max)
-    {
-        if (list[cur_right] < list[cur_left])
-        {
-            Swap(list, cur_right, cur_left);
-            cur_right++;
-        }else
-        {
-            cur_left++;
-        }
-    }
-}
-
-int MergeSort(std::vector<int>& list, int min, int max)
-{
-    if (min == max)
-    {
-        return min;
-    }
-    int new_max =min + (max - min / 2);
-    int start_left = MergeSort(list, min, new_max);
-    int start_right = MergeSort(list, new_max + 1, max);
-    //sort
-    TwoPointerSort(list, start_left, new_max, start_right, max);
-    
-    return min;
     
 }
 int main()

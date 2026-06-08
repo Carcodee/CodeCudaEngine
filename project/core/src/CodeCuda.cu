@@ -392,132 +392,81 @@ namespace code_kernels
             }
         }
     }
+    /*
+        We have this levels
+        - WM/WN = How much of BM and BN we are going to calculate per warp
+        The output is going to be WM * WN per warp
+        - TM/TN = How many cols and rows from M and cols from N we calculate
+        - WSUBM/WSUBN is the size of times we divide WM/WN based on TM/TN
+        - WMITER/WNITER number of iterations we do based on
+        TM/TN tiles we calculate per thread
 
-    __global__ void k_matmul_bt_2d_auto_tunning(const int M, const int N, const int K, float alpha, float beta,
-                                                float *a, float *b, float *c)
-    {
-        // x = rows
-        // y = rows
-        constexpr uint32_t BM = 64;
-        constexpr uint32_t BK = 8;
-        constexpr uint32_t BN = 64;
-        constexpr uint32_t TM = 8;
-        constexpr uint32_t TN = 8;
+        // warp size
+        WSIZE = 32
+        //block size on M
+        BM = 64
+        //block size on N
+        WN = 128
+        //warp tile on M
+        WM = 32
+        //warp tile on N
+        WN = 64
+        //number of subtiles on the warptile in WN
+        WNITER = 2
+        //number of subtiles on the warptile in WM
+        WMITER = 2
 
-        extern __shared__ float smem[];
+        //number of entries in N used per thread
+        TN = 4
 
-        float *a_s = smem;
-        float *b_s = smem + (BM * BK);
+        //size of the warpsubtile in WN
+        WSUBN = WN / WNITER = 64 / 2 = 32
 
-        uint32_t row_thread = threadIdx.x / BK;
-        uint32_t col_thread = threadIdx.x % BK;
+        //size of the warpsubtile in WM
+        WSUBM = WM / WMITER = 32 / 2 = 16
 
-        uint32_t local_row_a = (threadIdx.x / BK);
-        uint32_t local_col_a = (threadIdx.x % BK);
+        //number of cols the warp will have
+        WTCOLS = WSUBN / TN = 32 / 4 = 8
+        //number of rows the warp will have
+        WTROWS = WSIZE / WTCOLS = 32 / 8 = 4
 
-        uint32_t local_row_b = (threadIdx.x / BN);
-        uint32_t local_col_b = (threadIdx.x % BN);
+        //number of entries in M used per thread
+        TM = WSUBM/WTHREADROWS = 16 / 4 = 4
 
-        a += blockIdx.y * BM * K;
-        b += blockIdx.x * BN;
-        c += (blockIdx.y * BM * N) + (blockIdx.x * BN);
-
-        float bt[TM * TN] = {0.0};
-        float reg_m[TM] = {0.0};
-        float reg_n[TN] = {0.0};
-
-        int tile_count = ceilf(float(K) / float(BK));
-
-        // keep in mind for this matmul algorithms there is a lot of sizes that need to match
-        //  in this case is not casuality that BK * BN/BK * BK = 8, that means we can safely jump on
-        // a and b by BM * K and in B by BN
-        for (int i = 0; i < tile_count; ++i)
-        {
-
-            float4 *a_buff = reinterpret_cast<float4 *>(&a[(threadIdx.x) * K]);
-            float4 temp_a_1 = a_buff[0];
-            float4 temp_a_2 = a_buff[1];
-
-            // transpose A for vectorized loads on the outer product
-            a_s[0 * BM + threadIdx.x] = temp_a_1.x;
-            a_s[1 * BM + threadIdx.x] = temp_a_1.y;
-            a_s[2 * BM + threadIdx.x] = temp_a_1.z;
-            a_s[3 * BM + threadIdx.x] = temp_a_1.w;
-            a_s[4 * BM + threadIdx.x] = temp_a_2.x;
-            a_s[5 * BM + threadIdx.x] = temp_a_2.y;
-            a_s[6 * BM + threadIdx.x] = temp_a_2.z;
-            a_s[7 * BM + threadIdx.x] = temp_a_2.w;
-            //
-            //
-            for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
-            {
-                uint32_t stride_row_offset = curr_stride * BN;
-                b_s[stride_row_offset + local_col_b] = b[curr_stride * N + local_col_b];
-            }
-            __syncthreads();
-
-            a += BK;
-            b += BK * N;
-            for (int dot_idx = 0; dot_idx < BK; ++dot_idx)
-            {
-                for (int reg_col_idx = 0; reg_col_idx < TM; ++reg_col_idx)
-                {
-                    reg_m[reg_col_idx] = a_s[dot_idx * BM + row_thread * TM + reg_col_idx];
-                }
-                for (int reg_col_idx = 0; reg_col_idx < TN; ++reg_col_idx)
-                {
-                    reg_n[reg_col_idx] = b_s[dot_idx * BN + col_thread * TN + reg_col_idx];
-                }
-                for (int reg_n_idx = 0; reg_n_idx < TN; reg_n_idx++)
-                {
-                    for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
-                    {
-                        // todo
-                        bt[reg_m_idx * TM + reg_n_idx] += reg_m[reg_m_idx] * reg_n[reg_n_idx];
-                    }
-                }
-            }
-            __syncthreads();
-        }
-        for (int row_offset = 0; row_offset < BK; ++row_offset)
-        {
-            for (int col_offset = 0; col_offset < BK; ++col_offset)
-            {
-                c[(row_thread * BK + row_offset) * N + (col_thread * BK) + col_offset] =
-                    bt[row_offset * BK + col_offset];
-            }
-        }
-    }
-
+        //number of entries calculated in total per thread (TM * TN tiles of WMITER * WNITER)
+        TRES = TM * WMITER * TN * WNITER = 4 * 2 * 4 * 2 = 64
+        //number of register loaded in M
+        REGM = TM * WMITER = 8
+        //number of register loaded in N
+        REGN = TN * WNITER = 8
+    */
     __global__ void k_matmul_bt_warp_tilling(const int M, const int N, const int K, float alpha, float beta, float *a,
                                              float *b, float *c)
     {
         // x = rows
         // y = rows
-        constexpr uint32_t WARP_SIZE = 32;
-        constexpr uint32_t BM = 128;
-        constexpr uint32_t BK = 8;
+        constexpr int32_t WSIZE = 32;
+        constexpr uint32_t BSIZE = 128;
         constexpr uint32_t BN = 128;
-        constexpr uint32_t WARP_COUNT = 128 / WARP_SIZE;
+        constexpr uint32_t BM = 64;
+        constexpr uint32_t BK = 8;
+        constexpr uint32_t WN = 64;
+        constexpr uint32_t WM = 32;
+        constexpr uint32_t WCOLS = BN / WN;
+        constexpr uint32_t WROWS = BM / WM;
 
-        constexpr uint32_t WARP_COLS = 2;
-        constexpr uint32_t WARP_ROWS = WARP_COUNT / WARP_COLS; // 2
-        
-        constexpr uint32_t W_SUB_TILE_COUNT_M = 2;
-        constexpr uint32_t W_SUB_TILE_COUNT_N = 2;
-        
-        constexpr uint32_t TN = 2;
-        constexpr uint32_t TM = 2;
-        constexpr uint32_t TK = 2;
-        
+        constexpr uint32_t WNITER = 2;
+        constexpr uint32_t WMITER = 2;
 
-        constexpr uint32_t WM = BM / WARP_ROWS; // 64
-        constexpr uint32_t WN = BN / WARP_ROWS; // 64
-        constexpr uint32_t WK = BK / WARP_COLS; // 4
-        
-        constexpr uint32_t WARP_THREAD_COUNT_M = WM / (TM * W_SUB_TILE_COUNT_M); // 16
-        constexpr uint32_t WARP_THREAD_COUNT_N = WN / (TM * W_SUB_TILE_COUNT_N); // 16
-        constexpr uint32_t WARP_THREAD_COUNT_K =WARP_SIZE / WARP_THREAD_COUNT_M; // 2 
+        constexpr uint32_t TN = 4;
+
+        constexpr uint32_t WSUBN = WN / WNITER;
+        constexpr uint32_t WSUBM = WM / WMITER;
+        constexpr uint32_t WTCOLS = WSUBN / TN;
+        constexpr uint32_t WTROWS = WSIZE / WTCOLS;
+
+        constexpr uint32_t TM = WSUBM / WTROWS;
+
 
         // number of subtiles calculated per thread
 
@@ -527,107 +476,73 @@ namespace code_kernels
         float *b_s = smem + (BM * BK);
 
 
-        uint32_t warp_id = threadIdx.x / WARP_SIZE;
-        uint32_t lane_id = threadIdx.x % WARP_SIZE;
+        uint32_t warp_id = threadIdx.x / WSIZE;
+        uint32_t lane_id = threadIdx.x % WSIZE;
 
-        uint32_t warp_row = warp_id / WARP_COLS;
-        uint32_t warp_col = warp_id % WARP_COLS;
+        uint32_t warp_row = warp_id / WCOLS;
+        uint32_t warp_col = warp_id % WCOLS;
+
+        uint32_t thread_row_in_warp = lane_id / WTCOLS;
+        uint32_t thread_col_in_warp = lane_id % WTCOLS;
 
         // 8
-
         a += blockIdx.y * BM * K;
         b += blockIdx.x * BN;
-        //warp results offset in rows 4 thread results in rows x 16 lane rows = 64 row stride
-        //warp results offset in cols 4 thread results in columns x 2 lane cols = 8 col stride
-        c += (blockIdx.y * BM * N + warp_row * WARP_THREAD_COUNT_M * W_SUB_TILE_COUNT_M * TM * N) + (blockIdx.x * BN) + (warp_col * WARP_THREAD_COUNT_K * TK * W_SUB_TILE_COUNT_N); 
+        // we place c on the warp block
+        c += (blockIdx.y * BM * N + blockIdx.x * BN) + (warp_row * WM * N + warp_col * WN);
 
-        float thread_results[TM * TN * W_SUB_TILE_COUNT_M * W_SUB_TILE_COUNT_N] = {1.0};
-        // float reg_m[TM * TM] = {0.0};
-        // float reg_n[TN * TN] = {0.0};
+        float thread_results[TM * TN * WMITER * WNITER] = {1.0};
+        float reg_m[TM * WMITER] = {0.0};
+        float reg_n[TN * WNITER] = {0.0};
 
         int tile_count = ceilf(float(K) / float(BK));
 
-        // int a_col_stride = BK / (BS / BM); // = 4 jumps by 4 after 64 threads
-        // int a_col_idx = threadIdx.x % 2;
-        // int a_row_idx = threadIdx.x % BM;
         for (int i = 0; i < tile_count; ++i)
         {
-            // transpose A for vectorized loads on the outer product
-            float4 *a_buff = reinterpret_cast<float4 *>(&a[(threadIdx.x) * K]);
-            float4 temp_a_1 = a_buff[0];
-            float4 temp_a_2 = a_buff[1];
-
-            // transpose A for vectorized loads on the outer product
-            a_s[0 * BM + threadIdx.x] = temp_a_1.x;
-            a_s[1 * BM + threadIdx.x] = temp_a_1.y;
-            a_s[2 * BM + threadIdx.x] = temp_a_1.z;
-            a_s[3 * BM + threadIdx.x] = temp_a_1.w;
-            a_s[4 * BM + threadIdx.x] = temp_a_2.x;
-            a_s[5 * BM + threadIdx.x] = temp_a_2.y;
-            a_s[6 * BM + threadIdx.x] = temp_a_2.z;
-            a_s[7 * BM + threadIdx.x] = temp_a_2.w;
+            // // transpose A for vectorized loads on the outer product
+            // float4 *a_buff = reinterpret_cast<float4 *>(&a[(threadIdx.x) * K]);
+            // float4 temp_a_1 = a_buff[0];
+            // float4 temp_a_2 = a_buff[1];
             //
-            //
-            for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
-            {
-                uint32_t stride_row_offset = curr_stride * BN;
-                b_s[stride_row_offset + threadIdx.x] = b[curr_stride * N + threadIdx.x];
-            }
-            __syncthreads();
+            // // transpose A for vectorized loads on the outer product
+            // a_s[0 * BM + threadIdx.x] = temp_a_1.x;
+            // a_s[1 * BM + threadIdx.x] = temp_a_1.y;
+            // a_s[2 * BM + threadIdx.x] = temp_a_1.z;
+            // a_s[3 * BM + threadIdx.x] = temp_a_1.w;
+            // a_s[4 * BM + threadIdx.x] = temp_a_2.x;
+            // a_s[5 * BM + threadIdx.x] = temp_a_2.y;
+            // a_s[6 * BM + threadIdx.x] = temp_a_2.z;
+            // a_s[7 * BM + threadIdx.x] = temp_a_2.w;
+            // //
+            // //
+            // for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
+            // {
+            //     uint32_t stride_row_offset = curr_stride * BN;
+            //     b_s[stride_row_offset + threadIdx.x] = b[curr_stride * N + threadIdx.x];
+            // }
+            // __syncthreads();
 
             a += BK;
             b += BK * N;
             for (int dot_idx = 0; dot_idx < TM; ++dot_idx)
             {
-                // for (int w_sub_m_idx = 0; w_sub_m_idx < TM; ++w_sub_m_idx)
-                // {
-                //     for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
-                //     {
-                //         // index into a_s based on the warp idx and lane idx
-                //         // first move a_s to warp pos, then lane id pos
-                //         reg_m[w_sub_m_idx * TM + reg_m_idx] =
-                //             a_s[(warp_row * 4 * BM + warp_col * 64) + (lane_row * 2 * BM) + (dot_idx * BM) + (w_sub_m_idx * TM) + reg_m_idx];
-                //     }
-                // }
-                //
-                // for (int w_sub_n_idx = 0; w_sub_n_idx < TN; ++w_sub_n_idx)
-                // {
-                //     for (int reg_n_idx = 0; reg_n_idx < TN; ++reg_n_idx)
-                //     {
-                //         // index into a_s based on the warp idx and lane idx
-                //         // first move a_s to warp pos, then lane id pos
-                //         reg_n[w_sub_n_idx * TN + reg_n_idx] =
-                //             b_s[(warp_row * 4 * BN + warp_col * 64) + (lane_row * 2 * BN) + (dot_idx * BN) + (w_sub_n_idx * TN) + reg_n_idx];
-                //     }
-                // }
-                
-                // for (int w_sub_n_idx = 0; w_sub_n_idx < TN; ++w_sub_n_idx)
-                // {
-                //     for (int w_sub_m_idx = 0; w_sub_m_idx < UPPER_BOUND; ++w_sub_m_idx)
-                //     {
-                //         
-                //     }
-                //     
-                // }
             }
             __syncthreads();
         }
 
-
-        c[0] = 1.0f;
-        for (int w_tile_row_idx = 0; w_tile_row_idx < W_SUB_TILE_COUNT_M; ++w_tile_row_idx)
+        for (int wm_iter_idx = 0; wm_iter_idx < WMITER; ++wm_iter_idx)
         {
-            for (int w_tile_col_idx = 0; w_tile_col_idx < W_SUB_TILE_COUNT_N; ++w_tile_col_idx)
+            for (int wn_iter_idx = 0; wn_iter_idx < WNITER; ++wn_iter_idx)
             {
-                float* c_ref = c;
-                c_ref+= w_tile_row_idx * TM * N + w_tile_col_idx * TM;
-                for (int sub_tile_row_idx = 0; sub_tile_row_idx < TM; ++sub_tile_row_idx)
+                float *c_temp = c;
+                c_temp += wm_iter_idx * WSUBM * N + wn_iter_idx * WSUBN;
+                for (int tm_idx = 0; tm_idx < TM; ++tm_idx)
                 {
-                    for (int sub_tile_col_idx = 0; sub_tile_col_idx < TN; ++sub_tile_col_idx)
+                    for (int tn_idx = 0; tn_idx < TN; ++tn_idx)
                     {
-                        // thread_results[(w_tile_row_idx * SUB_TILE_COUNT_M * TM + w_tile_col_idx * TN) + sub_tile_row_idx * TM +
-                        //                sub_tile_col_idx]
-                        // c_ref[sub_tile_row_idx * TM + sub_tile_col_idx] = 1.0f;
+                        // vectorized loads for c+ tm_idx * N + tn_idx
+                        c_temp[(TN * thread_col_in_warp) + (thread_row_in_warp * TM * N) + tm_idx * N + tn_idx] = thread_col_in_warp;
+                            // (WNITER * TN * TM * wm_iter_idx) + (TN * wn_iter_idx) + TN * tm_idx + tn_idx;
                     }
                 }
             }
@@ -846,7 +761,7 @@ namespace CodeCuda
                 constexpr uint32_t BM = 64;
                 constexpr uint32_t BK = 8;
                 constexpr uint32_t BN = 64;
-                dim3 grid(ceil(double(M) / double(BK * BK)), ceil(double(N) / double(BK * BK)));
+                dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
                 dim3 block(BK * BK);
                 code_kernels::k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
                     M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
@@ -860,7 +775,7 @@ namespace CodeCuda
                 constexpr uint32_t BM = 64;
                 constexpr uint32_t BK = 8;
                 constexpr uint32_t BN = 64;
-                dim3 grid(ceil(double(M) / double(BK * BK)), ceil(double(N) / double(BK * BK)));
+                dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
                 dim3 block(BK * BK);
                 code_kernels::k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
                     M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
@@ -871,13 +786,29 @@ namespace CodeCuda
             "warp_tilling",
             [N, M, K, d_A, d_B, d_C]()
             {
-                constexpr uint32_t BM = 128;
+                constexpr int32_t WSIZE = 32;
+                constexpr uint32_t BM = 64;
                 constexpr uint32_t BK = 8;
                 constexpr uint32_t BN = 128;
                 constexpr uint32_t B_SIZE = 128;
-                constexpr uint32_t T_RESULTS = 4;
+                constexpr uint32_t WN = 64;
+                constexpr uint32_t WM = 32;
+                constexpr uint32_t WCOLS = BN / WN;
+                constexpr uint32_t WROWS = BM / WM;
 
-                dim3 grid(ceil(double(M) / double(16 * T_RESULTS)), ceil(double(N) / double(2 * T_RESULTS)));
+                constexpr uint32_t WNITER = 2;
+                constexpr uint32_t WMITER = 2;
+
+                constexpr uint32_t TN = 4;
+
+                constexpr uint32_t WSUBN = WN / WNITER;
+                constexpr uint32_t WSUBM = WM / WMITER;
+                constexpr uint32_t WTCOLS = WSUBN / TN;
+                constexpr uint32_t WTROWS = WSIZE / WTCOLS;
+                constexpr uint32_t TM = WSUBM / WTROWS;
+
+
+                dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
                 dim3 block(B_SIZE);
                 code_kernels::k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
                     M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
