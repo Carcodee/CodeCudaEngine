@@ -1,13 +1,16 @@
 #ifndef CODECUDA_LOGGER_HPP
 #define CODECUDA_LOGGER_HPP
 
-#include <cstdio>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <source_location>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -46,6 +49,19 @@ namespace CodeCommon
             return MinimumLevelStorage();
         }
 
+        static void SetOutputFile(const std::string& path)
+        {
+            std::lock_guard<std::mutex> lock(MutexStorage());
+            SetOutputFileUnlocked(path);
+        }
+
+        static void DisableOutputFile()
+        {
+            std::lock_guard<std::mutex> lock(MutexStorage());
+            OutputFileStorage().close();
+            OutputFileEnvCheckedStorage() = true;
+        }
+
         template <typename... Args>
         static void Log(LogLevel level, const std::source_location& location, Args&&... args)
         {
@@ -55,34 +71,49 @@ namespace CodeCommon
             }
 
             std::lock_guard<std::mutex> lock(MutexStorage());
+            EnsureOutputFileConfigured();
             std::ostream& stream = StreamFor(level);
-            stream << "[" << TimestampNow() << "]"
-                   << " [" << ToString(level) << "]"
-                   << " [" << location.file_name() << ":" << location.line() << "] ";
-            (stream << ... << std::forward<Args>(args));
-            stream << '\n';
+            const std::string prefix = "[" + TimestampNow() + "] [" + std::string(ToString(level)) + "] [" +
+                                       location.file_name() + ":" + std::to_string(location.line()) + "] ";
+            std::ostringstream message;
+            (message << ... << std::forward<Args>(args));
+
+            stream << prefix << message.str() << '\n';
+            WriteToOutputFile(prefix, message.str(), "\n");
         }
 
         template <typename... Args>
         static void Print(Args&&... args)
         {
             std::lock_guard<std::mutex> lock(MutexStorage());
-            (std::cout << ... << std::forward<Args>(args));
+            EnsureOutputFileConfigured();
+            std::ostringstream message;
+            (message << ... << std::forward<Args>(args));
+            std::cout << message.str();
+            WriteToOutputFile("", message.str(), "");
         }
 
         template <typename... Args>
         static void Println(Args&&... args)
         {
             std::lock_guard<std::mutex> lock(MutexStorage());
-            (std::cout << ... << std::forward<Args>(args));
+            EnsureOutputFileConfigured();
+            std::ostringstream message;
+            (message << ... << std::forward<Args>(args));
+            std::cout << message.str();
             std::cout << '\n';
+            WriteToOutputFile("", message.str(), "\n");
         }
         
         template <typename... Args>
         static void PrintError(Args&&... args)
         {
             std::lock_guard<std::mutex> lock(MutexStorage());
-            (std::cerr << ... << std::forward<Args>(args));
+            EnsureOutputFileConfigured();
+            std::ostringstream message;
+            (message << ... << std::forward<Args>(args));
+            std::cerr << message.str();
+            WriteToOutputFile("", message.str(), "");
         }
 
     private:
@@ -101,6 +132,53 @@ namespace CodeCommon
         {
             static std::mutex mutex;
             return mutex;
+        }
+
+        static std::ofstream& OutputFileStorage()
+        {
+            static std::ofstream file;
+            return file;
+        }
+
+        static bool& OutputFileEnvCheckedStorage()
+        {
+            static bool checked = false;
+            return checked;
+        }
+
+        static void SetOutputFileUnlocked(const std::string& path)
+        {
+            std::ofstream& file = OutputFileStorage();
+            file.close();
+            file.open(path, std::ios::out | std::ios::app);
+        }
+
+        static void EnsureOutputFileConfigured()
+        {
+            bool& checked = OutputFileEnvCheckedStorage();
+            if (checked)
+            {
+                return;
+            }
+
+            checked = true;
+            const char* path = std::getenv("CODECUDA_LOG_FILE");
+            if (path != nullptr && path[0] != '\0')
+            {
+                SetOutputFileUnlocked(path);
+            }
+        }
+
+        static void WriteToOutputFile(const std::string& prefix, const std::string& message, const char* suffix)
+        {
+            std::ofstream& file = OutputFileStorage();
+            if (!file.is_open())
+            {
+                return;
+            }
+
+            file << prefix << message << suffix;
+            file.flush();
         }
 
         static std::ostream& StreamFor(LogLevel level)

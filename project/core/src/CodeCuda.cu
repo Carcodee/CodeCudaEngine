@@ -2,9 +2,13 @@
 #ifndef CODECUDA_CU
 #define CODECUDA_CU
 
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <map>
+#include <sstream>
 #include "CodeCommon.hpp"
 #include "CodeInclude.h"
 #include "cublas.h"
@@ -13,7 +17,9 @@
 
 namespace code_kernels
 {
-    // A: M×K, B: K×N, C: M×N  (standard BLAS — K is the shared/inner dimension)
+    // A: M×K, B: K×N, C: M×N  (standard BLAS - K is the shared/inner dimension)
+    // -----------------------------------------------------------------------------
+    // 1D naive kernel: one CUDA thread computes one C(row, col).
     __global__ void k_matmul(const int M, const int N, const int K, float alpha, float beta, const float *a,
                              const float *b, float *c)
     {
@@ -33,6 +39,8 @@ namespace code_kernels
         c[y * N + x] = alpha * acc + 1.0f * beta;
     }
 
+    // -----------------------------------------------------------------------------
+    // 2D naive kernel: grid.x maps N columns, grid.y maps M rows.
     __global__ void k_matmul_naive(const int M, const int N, const int K, float alpha, float beta, const float *a,
                                    const float *b, float *c)
     {
@@ -51,11 +59,13 @@ namespace code_kernels
         }
     }
 
+    // -----------------------------------------------------------------------------
+    // Shared-memory tiled kernel: one block computes a 32x32 tile of C.
     __global__ void k_matmul_x_y(const int M, const int N, const int K, float alpha, float beta, const float *a,
                                  const float *b, float *c)
     {
         constexpr int32_t BLOCKSIZE = 32;
-        // x = rows
+        // blockIdx.x maps M rows in these kernels.
         extern __shared__ float smem[];
         float *a_s = smem;
         float *b_s = smem + BLOCKSIZE * BLOCKSIZE;
@@ -97,7 +107,8 @@ namespace code_kernels
         }
     }
 
-
+    // -----------------------------------------------------------------------------
+    // Block-tiled row kernel: each thread accumulates BK values along N.
     __global__ void k_matmul_bt_row_tile(const int M, const int N, const int K, float alpha, float beta, const float *a,
                                          const float *b, float *c)
     {
@@ -105,7 +116,7 @@ namespace code_kernels
         constexpr int BM = 64;
         constexpr int BK = 8;
         constexpr int BN = 64;
-        // x = rows
+        // blockIdx.x maps M rows in these kernels.
         extern __shared__ float smem[];
 
         float *a_s = smem;
@@ -155,13 +166,15 @@ namespace code_kernels
         {
         }
         int total_c_entries_per_block = (blockIdx.y * BK * BK);
-        // each threat cal 0 ... 8 ... 16 ... 24 ... 32 ... etc
+        // each thread cal 0 ... 8 ... 16 ... 24 ... 32 ... etc
         for (int col_offset = 0; col_offset < BK; ++col_offset)
         {
             c[(row * N) + (BK * col_offset) + total_c_entries_per_block + local_col] = bt[col_offset];
         }
     }
 
+    // -----------------------------------------------------------------------------
+    // Block-tiled column kernel: each thread accumulates BK values along M.
     __global__ void k_matmul_bt_col_tile(const int M, const int N, const int K, float alpha, float beta, const float *a,
                                          const float *b, float *c)
     {
@@ -169,7 +182,7 @@ namespace code_kernels
         constexpr int BM = 64;
         constexpr int BK = 8;
         constexpr int BN = 64;
-        // x = rows
+        // blockIdx.x maps M rows in these kernels.
         // y = rows
         extern __shared__ float smem[];
 
@@ -217,10 +230,13 @@ namespace code_kernels
             c[(row_thread * BK * N) + (row_offset * N) + col_thread] = bt[row_offset];
         }
     }
+
+    // -----------------------------------------------------------------------------
+    // 2D register-tiled kernel: each thread computes an TMxTN output tile.
     __global__ void k_matmul_bt_2d_tilling(const int M, const int N, const int K, float alpha, float beta,
                                            const float *a, const float *b, float *c)
     {
-        // x = rows
+        // blockIdx.x maps M rows in these kernels.
         // y = rows
         constexpr uint32_t BM = 64;
         constexpr uint32_t BK = 8;
@@ -251,9 +267,10 @@ namespace code_kernels
         float reg_n[TN] = {0.0};
 
         int tile_count = ceilf(float(K) / float(BK));
+        // CODECUDA_DEVICE_LOG_INFO("%d", tile_count);
 
         // keep in mind for this matmul algorithms there is a lot of sizes that need to match
-        //  in this case is not casuality that BK * BN/BK * BK = 8, that means we can safely jump on
+        //  in this case is not coincidence that BK * BN/BK * BK = 8, that means we can safely jump on
         // a and b by BM * K and in B by BN
         for (int i = 0; i < tile_count; ++i)
         {
@@ -285,7 +302,6 @@ namespace code_kernels
                 {
                     for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
                     {
-                        // todo
                         bt[reg_m_idx * TM + reg_n_idx] += reg_m[reg_m_idx] * reg_n[reg_n_idx];
                     }
                 }
@@ -302,10 +318,12 @@ namespace code_kernels
         }
     }
 
+    // -----------------------------------------------------------------------------
+    // 2D register-tiled kernel with A transposed in shared memory.
     __global__ void k_matmul_bt_2d_tilling_transposed_a(const int M, const int N, const int K, float alpha, float beta,
                                                         float *a, float *b, float *c)
     {
-        // x = rows
+        // blockIdx.x maps M rows in these kernels.
         // y = rows
         constexpr uint32_t BM = 64;
         constexpr uint32_t BK = 8;
@@ -334,7 +352,7 @@ namespace code_kernels
         int tile_count = ceilf(float(K) / float(BK));
 
         // keep in mind for this matmul algorithms there is a lot of sizes that need to match
-        //  in this case is not casuality that BK * BN/BK * BK = 8, that means we can safely jump on
+        //  in this case is not coincidence that BK * BN/BK * BK = 8, that means we can safely jump on
         // a and b by BM * K and in B by BN
         for (int i = 0; i < tile_count; ++i)
         {
@@ -352,8 +370,6 @@ namespace code_kernels
             a_s[5 * BM + threadIdx.x] = temp_a_2.y;
             a_s[6 * BM + threadIdx.x] = temp_a_2.z;
             a_s[7 * BM + threadIdx.x] = temp_a_2.w;
-            //
-            //
             for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
             {
                 uint32_t stride_row_offset = curr_stride * BN;
@@ -442,30 +458,55 @@ namespace code_kernels
         //number of register loaded in N
         REGN = TN * WNITER = 8
     */
+    struct k_auto_tunning_params
+    {
+        static constexpr uint32_t WSIZE = 32;
+        static constexpr uint32_t BN = 128;
+        static constexpr uint32_t BM = 64;
+        static constexpr uint32_t BK = 16;
+        static constexpr uint32_t WN = 64;
+        static constexpr uint32_t WM = 32;
+        // this is the total block size calculated based on BM, WM... so
+        static constexpr uint32_t BSIZE = (BM / WM) * (BN / WN) * WSIZE;
+        static constexpr uint32_t WCOLS = BN / WN;
+        static constexpr uint32_t WROWS = BM / WM;
+        static constexpr uint32_t WNITER = 2;
+
+        static constexpr uint32_t TN = 4;
+        static constexpr uint32_t TM = 4;
+
+        static constexpr uint32_t WMITER = (WM * WN) / (WSIZE * TM * TN * WNITER);
+        static constexpr uint32_t WSUBN = WN / WNITER;
+        static constexpr uint32_t WSUBM = WM / WMITER;
+        static constexpr uint32_t WTCOLS = WSUBN / TN;
+        static constexpr uint32_t WTROWS = WSIZE / WTCOLS;
+    };
     __global__ void k_matmul_bt_warp_tilling(const int M, const int N, const int K, float alpha, float beta, float *a,
                                              float *b, float *c)
     {
         // x = rows
         // y = rows
-        constexpr int32_t WSIZE = 32;
-        constexpr uint32_t BSIZE = 128;
-        constexpr uint32_t BN = 128;
-        constexpr uint32_t BM = 64;
-        constexpr uint32_t BK = 8;
-        constexpr uint32_t WN = 64;
-        constexpr uint32_t WM = 32;
-        constexpr uint32_t WCOLS = BN / WN;
-        constexpr uint32_t WROWS = BM / WM;
-        constexpr uint32_t WNITER = 2;
+        using Params = k_auto_tunning_params;
 
-        constexpr uint32_t TN = 4;
-        constexpr uint32_t TM = 4;
+        constexpr uint32_t WSIZE = Params::WSIZE;
+        constexpr uint32_t BSIZE = Params::BSIZE;
+        constexpr uint32_t BN = Params::BN;
+        constexpr uint32_t BM = Params::BM;
+        constexpr uint32_t BK = Params::BK;
+        constexpr uint32_t WN = Params::WN;
+        constexpr uint32_t WM = Params::WM;
+        constexpr uint32_t WCOLS = Params::WCOLS;
+        constexpr uint32_t WROWS = Params::WROWS;
+        constexpr uint32_t WNITER = Params::WNITER;
 
-        constexpr uint32_t WMITER = (WM * WN) / (WSIZE * TM * TN * WNITER);
-        constexpr uint32_t WSUBN = WN / WNITER;
-        constexpr uint32_t WSUBM = WM / WMITER;
-        constexpr uint32_t WTCOLS = WSUBN / TN;
-        constexpr uint32_t WTROWS = WSIZE / WTCOLS;
+        constexpr uint32_t TN = Params::TN;
+        constexpr uint32_t TM = Params::TM;
+
+        constexpr uint32_t WMITER = Params::WMITER;
+        constexpr uint32_t WSUBN = Params::WSUBN;
+        constexpr uint32_t WSUBM = Params::WSUBM;
+        constexpr uint32_t WTCOLS = Params::WTCOLS;
+        constexpr uint32_t WTROWS = Params::WTROWS;
 
         // number of subtiles calculated per thread
 
@@ -473,7 +514,6 @@ namespace code_kernels
 
         float *a_s = smem;
         float *b_s = smem + (BM * BK);
-
 
         uint32_t warp_id = threadIdx.x / WSIZE;
         uint32_t lane_id = threadIdx.x % WSIZE;
@@ -496,30 +536,44 @@ namespace code_kernels
 
         uint32_t tile_count = ceilf(float(K) / float(BK));
 
-        constexpr uint32_t BM_COLS = BSIZE / BM;
-        constexpr uint32_t a_col_offset = BK / BM_COLS;
+        // We make tiles of 4 along the rows because we are doing vec4 loads
+        constexpr uint32_t BM_COLS = BK / 4;
+        constexpr uint32_t BM_ROW_STRIDE = BSIZE / BM_COLS;
+
+        constexpr uint32_t BN_COLS = BN / 4;
+        constexpr uint32_t BN_ROW_STRIDE = BSIZE / BN_COLS;
 
         uint32_t a_col = threadIdx.x % BM_COLS;
         uint32_t a_row = threadIdx.x / BM_COLS;
 
-        uint32_t BN_COLS = BSIZE / BN;
 
-            for (int i = 0; i < tile_count; ++i)
+        uint32_t b_col = threadIdx.x % BN_COLS;
+        uint32_t b_row = threadIdx.x / BN_COLS;
+
+
+        for (int i = 0; i < tile_count; ++i)
         {
             // // transpose A for vectorized loads on the outer product
-            float4 *a_buff = reinterpret_cast<float4 *>(&a[a_row * K + a_col * a_col_offset]);
-            float4 temp_a_1 = a_buff[0];
             //
             // // transpose A for vectorized loads on the outer product
-            a_s[(a_col * a_col_offset + 0) * BM + a_row] = temp_a_1.x;
-            a_s[(a_col * a_col_offset + 1) * BM + a_row] = temp_a_1.y;
-            a_s[(a_col * a_col_offset + 2) * BM + a_row] = temp_a_1.z;
-            a_s[(a_col * a_col_offset + 3) * BM + a_row] = temp_a_1.w;
-
-            for (uint32_t curr_stride = 0; curr_stride < BK; ++curr_stride)
+            for (int curr_stride = 0; curr_stride < BM; curr_stride += BM_ROW_STRIDE)
             {
-                uint32_t stride_row_offset = curr_stride * BN;
-                b_s[stride_row_offset + threadIdx.x] = b[curr_stride * N + threadIdx.x];
+                float4 *a_buff = reinterpret_cast<float4 *>(&a[(a_row + curr_stride) * K + a_col * 4]);
+                float4 temp_a_1 = a_buff[0];
+                a_s[(a_col * 4 + 0) * BM + (a_row + curr_stride)] = temp_a_1.x;
+                a_s[(a_col * 4 + 1) * BM + (a_row + curr_stride)] = temp_a_1.y;
+                a_s[(a_col * 4 + 2) * BM + (a_row + curr_stride)] = temp_a_1.z;
+                a_s[(a_col * 4 + 3) * BM + (a_row + curr_stride)] = temp_a_1.w;
+            }
+
+            for (uint32_t curr_stride = 0; curr_stride < BK; curr_stride += BN_ROW_STRIDE)
+            {
+                float4 *b_buff = reinterpret_cast<float4 *>(&b[(b_row + curr_stride) * N + b_col * 4]);
+                float4 temp = b_buff[0];
+                b_s[(b_row + curr_stride) * BN + (b_col * 4 + 0)] = temp.x;
+                b_s[(b_row + curr_stride) * BN + (b_col * 4 + 1)] = temp.y;
+                b_s[(b_row + curr_stride) * BN + (b_col * 4 + 2)] = temp.z;
+                b_s[(b_row + curr_stride) * BN + (b_col * 4 + 3)] = temp.w;
             }
             __syncthreads();
 
@@ -568,7 +622,6 @@ namespace code_kernels
             __syncthreads();
         }
 
-
         for (int wm_iter_idx = 0; wm_iter_idx < WMITER; ++wm_iter_idx)
         {
             for (int wn_iter_idx = 0; wn_iter_idx < WNITER; ++wn_iter_idx)
@@ -583,14 +636,22 @@ namespace code_kernels
                         float4 tmp = reinterpret_cast<float4 *>(
                             &c_temp[(thread_row_in_warp * TM * N) + (TN * thread_col_in_warp) + tm_idx * N])[0];
 
-                        tmp.x = thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
-                                               (TN * wn_iter_idx + 0)];
-                        tmp.y = thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
-                                               (TN * wn_iter_idx + 1)];
-                        tmp.z = thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
-                                               (TN * wn_iter_idx + 2)];
-                        tmp.w = thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
-                                               (TN * wn_iter_idx + 3)];
+                        tmp.x = alpha *
+                                thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
+                                               (TN * wn_iter_idx + 0)] +
+                            tmp.x * beta;
+                        tmp.y = alpha *
+                                thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
+                                               (TN * wn_iter_idx + 1)] +
+                            tmp.y * beta;
+                        tmp.z = alpha *
+                                thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
+                                               (TN * wn_iter_idx + 2)] +
+                            tmp.z * beta;
+                        tmp.w = alpha *
+                                thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
+                                               (TN * wn_iter_idx + 3)] +
+                            tmp.w * beta;
                         reinterpret_cast<float4 *>(
                             &c_temp[(thread_row_in_warp * TM * N) + (TN * thread_col_in_warp) + tm_idx * N])[0] = tmp;
                         // ;
@@ -691,10 +752,17 @@ namespace CodeCuda
 
         Wrappers::C_Memcpy(d_A, a, M * K * sizeof(float), cudaMemcpyHostToDevice);
         Wrappers::C_Memcpy(d_B, b, K * N * sizeof(float), cudaMemcpyHostToDevice);
+        
+        constexpr uint32_t BM = code_kernels::k_auto_tunning_params::BM;
+        constexpr uint32_t BK = code_kernels::k_auto_tunning_params::BK;
+        constexpr uint32_t BN = code_kernels::k_auto_tunning_params::BN;
+        constexpr uint32_t BSIZE = code_kernels::k_auto_tunning_params::BSIZE;
 
-        dim3 block(32, 1, 1);
-        dim3 grid(int((M * N) / 32) + 1, 1, 1);
-        code_kernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+        dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
+        dim3 block(BSIZE);
+        code_kernels::k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
+            M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+        
         Wrappers::C_GetLastError();
         Wrappers::C_DeviceSynchronize();
 
@@ -721,319 +789,415 @@ namespace CodeCuda
         }
     }
 
-    void add_kernel_launcher(const std::string &name, std::function<void()> kernelFunc,
-                             std::map<std::string, Internals::kernel_launcher> &kernels_out)
+    namespace CodeBenchmarking
     {
-        Internals::kernel_launcher launcher;
-        launcher.kernel = std::move(kernelFunc);
-        kernels_out.try_emplace(name, launcher);
-    }
-
-    void C_Matmul_Test(const int M, const int N, const int K, const float *a, const float *b, float *c, int runs)
-    {
-        if (c == nullptr)
+        void add_kernel_launcher(const std::string &name, std::function<void()> kernelFunc,
+                                 std::map<std::string, Internals::kernel_launcher> &kernels_out)
         {
-            CODECUDA_LOG_WARNING("target buffer is empty");
-            return;
+            Internals::kernel_launcher launcher;
+            launcher.kernel = std::move(kernelFunc);
+            kernels_out.try_emplace(name, launcher);
         }
-        bool testPassed = true;
 
-        // personal
-        float *d_A, *d_B, *d_C;
-        Wrappers::C_Malloc(&d_A, M * K * sizeof(float));
-        Wrappers::C_Malloc(&d_B, K * N * sizeof(float));
-        Wrappers::C_Malloc(&d_C, M * N * sizeof(float));
-
-        Wrappers::C_Memcpy(d_A, a, M * K * sizeof(float), cudaMemcpyHostToDevice);
-        Wrappers::C_Memcpy(d_B, b, K * N * sizeof(float), cudaMemcpyHostToDevice);
-
-        cudaEvent_t start, stop;
-        Wrappers::C_EventCreate(&start);
-        Wrappers::C_EventCreate(&stop);
-        /*
-        dim3 grid(ceil(double(N)/32.0f), ceil(double(M)/32.0f));
-        dim3 block(32, 32);
-        */
-
-        std::map<std::string, Internals::kernel_launcher> kernels;
-
-        add_kernel_launcher(
-            "naive_coalescent",
-            [N, M, K, d_A, d_B, d_C]()
-            {
-                dim3 grid(ceil(double(N) / 32.0f), ceil(double(M) / 32.0f));
-                dim3 block(32, 32);
-                code_kernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-            },
-            kernels);
-        add_kernel_launcher(
-            "smem",
-            [N, M, K, d_A, d_B, d_C]()
-            {
-                dim3 grid(ceil(double(M) / 32.0f), ceil(double(N) / 32.0f));
-                dim3 block(32 * 32);
-                code_kernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A, d_B,
-                                                                                         d_C);
-            },
-            kernels);
-
-        add_kernel_launcher(
-            "b_tilling_col_tile",
-            [N, M, K, d_A, d_B, d_C]()
-            {
-                constexpr uint32_t BM = 64;
-                constexpr uint32_t BK = 8;
-                constexpr uint32_t BN = 64;
-                dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BK * BK)));
-                dim3 block(BM * BK);
-                code_kernels::k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float)>>>(
-                    M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-            },
-            kernels);
-
-        add_kernel_launcher(
-            "b_tilling_row_tile",
-            [N, M, K, d_A, d_B, d_C]()
-            {
-                constexpr uint32_t BM = 64;
-                constexpr uint32_t BK = 8;
-                constexpr uint32_t BN = 64;
-                dim3 grid(ceil(double(M) / double(BM)), ceil(double(N) / double(BK * BK)));
-                dim3 block(BM * BK);
-                code_kernels::k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
-                    M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-            },
-            kernels);
-
-        add_kernel_launcher(
-            "b_tilling_2d",
-            [N, M, K, d_A, d_B, d_C]()
-            {
-                constexpr uint32_t BM = 64;
-                constexpr uint32_t BK = 8;
-                constexpr uint32_t BN = 64;
-                dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
-                dim3 block(BK * BK);
-                code_kernels::k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
-                    M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-            },
-            kernels);
-
-        add_kernel_launcher(
-            "b_tilling_2d_transposed",
-            [N, M, K, d_A, d_B, d_C]()
-            {
-                constexpr uint32_t BM = 64;
-                constexpr uint32_t BK = 8;
-                constexpr uint32_t BN = 64;
-                dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
-                dim3 block(BK * BK);
-                code_kernels::k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
-                    M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-            },
-            kernels);
-
-        add_kernel_launcher(
-            "warp_tilling",
-            [N, M, K, d_A, d_B, d_C]()
-            {
-                constexpr int32_t WSIZE = 32;
-                constexpr uint32_t BM = 64;
-                constexpr uint32_t BK = 8;
-                constexpr uint32_t BN = 128;
-                constexpr uint32_t B_SIZE = 128;
-                constexpr uint32_t WN = 64;
-                constexpr uint32_t WM = 32;
-                constexpr uint32_t WCOLS = BN / WN;
-                constexpr uint32_t WROWS = BM / WM;
-
-                constexpr uint32_t WNITER = 2;
-                constexpr uint32_t WMITER = 2;
-
-                constexpr uint32_t TN = 4;
-
-                constexpr uint32_t WSUBN = WN / WNITER;
-                constexpr uint32_t WSUBM = WM / WMITER;
-                constexpr uint32_t WTCOLS = WSUBN / TN;
-                constexpr uint32_t WTROWS = WSIZE / WTCOLS;
-                constexpr uint32_t TM = WSUBM / WTROWS;
-
-
-                dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
-                dim3 block(B_SIZE);
-                code_kernels::k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
-                    M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-            },
-            kernels);
-
-
-        for (int i = 0; i < 5; ++i)
+        std::string BuildMatmulBenchmarkResultJson(const c_matmul_benchmark_result &result)
         {
-            kernels.at("warp_tilling").kernel();
+            using Params = code_kernels::k_auto_tunning_params;
+
+            std::ostringstream output;
+            output << std::boolalpha;
+            output << "{\n";
+            output << "  \"shape\": {\"M\": " << result.M << ", \"N\": " << result.N << ", \"K\": " << result.K
+                   << "},\n";
+            output << "  \"runs\": " << result.runs << ",\n";
+            output << "  \"autotuning_params\": {\n";
+            output << "    \"WSIZE\": " << Params::WSIZE << ",\n";
+            output << "    \"BN\": " << Params::BN << ",\n";
+            output << "    \"BM\": " << Params::BM << ",\n";
+            output << "    \"BK\": " << Params::BK << ",\n";
+            output << "    \"WN\": " << Params::WN << ",\n";
+            output << "    \"WM\": " << Params::WM << ",\n";
+            output << "    \"BSIZE\": " << Params::BSIZE << ",\n";
+            output << "    \"WCOLS\": " << Params::WCOLS << ",\n";
+            output << "    \"WROWS\": " << Params::WROWS << ",\n";
+            output << "    \"WNITER\": " << Params::WNITER << ",\n";
+            output << "    \"TN\": " << Params::TN << ",\n";
+            output << "    \"TM\": " << Params::TM << ",\n";
+            output << "    \"WMITER\": " << Params::WMITER << ",\n";
+            output << "    \"WSUBN\": " << Params::WSUBN << ",\n";
+            output << "    \"WSUBM\": " << Params::WSUBM << ",\n";
+            output << "    \"WTCOLS\": " << Params::WTCOLS << ",\n";
+            output << "    \"WTROWS\": " << Params::WTROWS << "\n";
+            output << "  },\n";
+            output << "  \"personal\": {\"kernel\": \"warp_tilling\", \"ms\": " << result.personal_ms
+                   << ", \"gflops\": " << result.personal_gflops << "},\n";
+            output << "  \"cublas\": {\"ms\": " << result.cublas_ms << ", \"gflops\": " << result.cublas_gflops
+                   << "},\n";
+            output << "  \"accuracy\": {\"average_error\": " << result.average_error
+                   << ", \"max_error\": " << result.max_error << "},\n";
+            output << "  \"passed\": " << result.passed << "\n";
+            output << "}";
+            return output.str();
         }
-        Wrappers::C_GetLastError();
-        Wrappers::C_DeviceSynchronize();
 
-        Wrappers::C_EventRecord(start);
-        for (int i = 0; i < runs; ++i)
+        std::string TrimTrailingWhitespace(std::string text)
         {
-            kernels.at("warp_tilling").kernel();
-        }
-        Wrappers::C_GetLastError();
-
-        Wrappers::C_EventRecord(stop);
-        Wrappers::C_EventSynchronize(stop);
-        float ms = 0;
-        Wrappers::C_EventElapsedTime(&ms, start, stop);
-        double ms_real = ms / double(runs);
-        CODECUDA_PRINTLN("Average Time personal (ms): ", ms_real);
-        auto flops = int64_t(2 * int64_t(M) * int64_t(N) * int64_t(K));
-
-        double gflops = (double(flops) * 1.0e-9f) / double(ms_real / 1000.0f);
-        CODECUDA_PRINTLN("GFLOPS/s personal: ", gflops);
-
-        // cubulas
-        float *d_A_cublas, *d_B_cublas, *d_C_cublas;
-        Wrappers::C_Malloc(&d_A_cublas, M * K * sizeof(float));
-        Wrappers::C_Malloc(&d_B_cublas, K * N * sizeof(float));
-        Wrappers::C_Malloc(&d_C_cublas, M * N * sizeof(float));
-
-        Wrappers::C_Memcpy(d_A_cublas, a, M * K * sizeof(float), cudaMemcpyHostToDevice);
-        Wrappers::C_Memcpy(d_B_cublas, b, K * N * sizeof(float), cudaMemcpyHostToDevice);
-
-        float alpha = 1.0f;
-        float beta = 0.0f;
-        cublasHandle_t handle;
-        cudaEvent_t start_cublas, stop_cublas;
-        Wrappers::C_EventCreate(&start_cublas);
-        Wrappers::C_EventCreate(&stop_cublas);
-
-        CUBLAS_CHECK(cublasCreate_v2(&handle));
-
-        add_kernel_launcher(
-            "cublas",
-            [handle, N, M, K, alpha, d_B_cublas, d_A_cublas, beta, d_C_cublas]()
+            while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())))
             {
-                CUBLAS_CHECK(cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_cublas, N,
-                                            d_A_cublas, K, &beta, d_C_cublas, N));
-            },
-            kernels);
-
-        for (int i = 0; i < 5; ++i)
-        {
-            kernels.at("cublas").kernel();
-        }
-        Wrappers::C_EventRecord(start_cublas);
-        for (int i = 0; i < runs; ++i)
-        {
-            kernels.at("cublas").kernel();
-        }
-        Wrappers::C_EventRecord(stop_cublas);
-        Wrappers::C_EventSynchronize(stop_cublas);
-        float ms_cublas = 0;
-        Wrappers::C_EventElapsedTime(&ms_cublas, start_cublas, stop_cublas);
-        double ms_real_cublas = ms_cublas / double(runs);
-        CODECUDA_PRINTLN("Average Time cublas (ms): ", ms_real_cublas);
-        double gflops_cublas = double(double(flops) * 1.0e-9) / double(ms_real_cublas / 1000.0);
-        CODECUDA_PRINTLN("GFLOPS/s cublas: ", gflops_cublas);
-        // personal vs cublas
-        float *d_C_err;
-        Wrappers::C_Malloc(&d_C_err, M * N * sizeof(float));
-
-        dim3 block_err(128, 1, 1);
-        dim3 grid_err(ceil(double(M * N) / 128.0), 1, 1);
-        code_kernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_C_cublas, d_C_err);
-        Wrappers::C_GetLastError();
-        Wrappers::C_DeviceSynchronize();
-
-        float *errMatrix;
-        errMatrix = new float[M * N];
-        Wrappers::C_Memcpy(errMatrix, d_C_err, M * N * sizeof(float), cudaMemcpyDeviceToHost);
-
-        float err_average = 0.0f;
-        float max_error = 0.0f;
-        for (int i = 0; i < M * N; ++i)
-        {
-            err_average += errMatrix[i];
-            float currErr = errMatrix[i];
-            if (currErr > max_error)
-            {
-                max_error = currErr;
+                text.pop_back();
             }
+            return text;
         }
-        err_average /= float(M * N);
 
-        testPassed = max_error < 0.001f;
-
-        std::string errOutput = "";
-        errOutput += "----- Matmul compare -----\n";
-        errOutput += std::format("Average error (personal vs cublas): {:.6f}\n", err_average);
-        errOutput += std::format("Max error(personal vs cublas): {:.6f}\n", max_error);
-
-        if (M * N < 8192)
+        void C_SaveMatmulBenchmarkResultJson(const char *path, const c_matmul_benchmark_result &result)
         {
-            // personal vs cpu
-            auto *h_C = (float *)malloc(M * N * sizeof(float));
-            cpu_matmul(M, N, K, a, b, h_C);
-            float *d_h_C;
-            Wrappers::C_Malloc(&d_h_C, M * N * sizeof(float));
+            if (path == nullptr || path[0] == '\0')
+            {
+                CODECUDA_LOG_WARNING("benchmark json path is empty");
+                return;
+            }
 
-            Wrappers::C_Memcpy(d_h_C, h_C, M * N * sizeof(float), cudaMemcpyHostToDevice);
+            const std::string result_json = BuildMatmulBenchmarkResultJson(result);
 
-            code_kernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_h_C, d_C_err);
+            std::ifstream existing_input(path);
+            std::string existing;
+            if (existing_input)
+            {
+                existing.assign(std::istreambuf_iterator<char>(existing_input), std::istreambuf_iterator<char>());
+            }
+
+            std::ofstream output(path, std::ios::out | std::ios::trunc);
+            if (!output)
+            {
+                CODECUDA_LOG_WARNING("failed to open benchmark json path: ", path);
+                return;
+            }
+
+            existing = TrimTrailingWhitespace(existing);
+            if (existing.size() >= 2 && existing.front() == '[' && existing.back() == ']')
+            {
+                existing.pop_back();
+                existing = TrimTrailingWhitespace(existing);
+                output << existing;
+                if (existing.size() > 1)
+                {
+                    output << ",\n";
+                }
+                output << result_json << "\n]\n";
+                return;
+            }
+
+            output << "[\n" << result_json << "\n]\n";
+        }
+
+        void C_Matmul_Test(const int M, const int N, const int K, const float *a, const float *b, float *c, int runs)
+        {
+            if (c == nullptr)
+            {
+                CODECUDA_LOG_WARNING("target buffer is empty");
+                return;
+            }
+            bool testPassed = true;
+
+            // personal
+            float *d_A, *d_B, *d_C;
+            Wrappers::C_Malloc(&d_A, M * K * sizeof(float));
+            Wrappers::C_Malloc(&d_B, K * N * sizeof(float));
+            Wrappers::C_Malloc(&d_C, M * N * sizeof(float));
+
+            Wrappers::C_Memcpy(d_A, a, M * K * sizeof(float), cudaMemcpyHostToDevice);
+            Wrappers::C_Memcpy(d_B, b, K * N * sizeof(float), cudaMemcpyHostToDevice);
+
+            cudaEvent_t start, stop;
+            Wrappers::C_EventCreate(&start);
+            Wrappers::C_EventCreate(&stop);
+            /*
+            dim3 grid(ceil(double(N)/32.0f), ceil(double(M)/32.0f));
+            dim3 block(32, 32);
+            */
+
+            std::map<std::string, Internals::kernel_launcher> kernels;
+
+            add_kernel_launcher(
+                "naive_coalescent",
+                [N, M, K, d_A, d_B, d_C]()
+                {
+                    dim3 grid(ceil(double(N) / 32.0f), ceil(double(M) / 32.0f));
+                    dim3 block(32, 32);
+                    code_kernels::k_matmul_naive<<<grid, block>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                },
+                kernels);
+            add_kernel_launcher(
+                "smem",
+                [N, M, K, d_A, d_B, d_C]()
+                {
+                    dim3 grid(ceil(double(M) / 32.0f), ceil(double(N) / 32.0f));
+                    dim3 block(32 * 32);
+                    code_kernels::k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2>>>(M, N, K, 1.0f, 0.0f, d_A,
+                                                                                             d_B, d_C);
+                },
+                kernels);
+
+            add_kernel_launcher(
+                "b_tilling_col_tile",
+                [N, M, K, d_A, d_B, d_C]()
+                {
+                    constexpr uint32_t BM = 64;
+                    constexpr uint32_t BK = 8;
+                    constexpr uint32_t BN = 64;
+                    dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BK * BK)));
+                    dim3 block(BM * BK);
+                    code_kernels::k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float)>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                },
+                kernels);
+
+            add_kernel_launcher(
+                "b_tilling_row_tile",
+                [N, M, K, d_A, d_B, d_C]()
+                {
+                    constexpr uint32_t BM = 64;
+                    constexpr uint32_t BK = 8;
+                    constexpr uint32_t BN = 64;
+                    dim3 grid(ceil(double(M) / double(BM)), ceil(double(N) / double(BK * BK)));
+                    dim3 block(BM * BK);
+                    code_kernels::k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                },
+                kernels);
+
+            add_kernel_launcher(
+                "b_tilling_2d",
+                [N, M, K, d_A, d_B, d_C]()
+                {
+                    constexpr uint32_t BM = 64;
+                    constexpr uint32_t BK = 8;
+                    constexpr uint32_t BN = 64;
+                    dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
+                    dim3 block(BK * BK);
+                    code_kernels::k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                },
+                kernels);
+
+            add_kernel_launcher(
+                "b_tilling_2d_transposed",
+                [N, M, K, d_A, d_B, d_C]()
+                {
+                    constexpr uint32_t BM = 64;
+                    constexpr uint32_t BK = 8;
+                    constexpr uint32_t BN = 64;
+                    dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
+                    dim3 block(BK * BK);
+                    code_kernels::
+                        k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
+                            M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                },
+                kernels);
+
+            add_kernel_launcher(
+                "warp_tilling",
+                [N, M, K, d_A, d_B, d_C]()
+                {
+                    constexpr uint32_t BM = code_kernels::k_auto_tunning_params::BM;
+                    constexpr uint32_t BK = code_kernels::k_auto_tunning_params::BK;
+                    constexpr uint32_t BN = code_kernels::k_auto_tunning_params::BN;
+                    constexpr uint32_t BSIZE = code_kernels::k_auto_tunning_params::BSIZE;
+
+                    dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
+                    dim3 block(BSIZE);
+                    code_kernels::k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float)>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                },
+                kernels);
+
+
+            for (int i = 0; i < 5; ++i)
+            {
+                kernels.at("warp_tilling").kernel();
+            }
             Wrappers::C_GetLastError();
             Wrappers::C_DeviceSynchronize();
-            float *errMatrix_cpu;
-            errMatrix_cpu = new float[M * N];
-            Wrappers::C_Memcpy(errMatrix_cpu, d_C_err, M * N * sizeof(float), cudaMemcpyDeviceToHost);
 
-            float err_average_cpu = 0.0f;
-            float max_error_cpu = 0.0f;
+            Wrappers::C_EventRecord(start);
+            for (int i = 0; i < runs; ++i)
+            {
+                kernels.at("warp_tilling").kernel();
+            }
+            Wrappers::C_GetLastError();
+
+            Wrappers::C_EventRecord(stop);
+            Wrappers::C_EventSynchronize(stop);
+            float ms = 0;
+            Wrappers::C_EventElapsedTime(&ms, start, stop);
+            double ms_real = ms / double(runs);
+            CODECUDA_PRINTLN("Average Time personal (ms): ", ms_real);
+            auto flops = int64_t(2 * int64_t(M) * int64_t(N) * int64_t(K));
+
+            double gflops = (double(flops) * 1.0e-9f) / double(ms_real / 1000.0f);
+            CODECUDA_PRINTLN("GFLOPS/s personal: ", gflops);
+
+            // cubulas
+            float *d_A_cublas, *d_B_cublas, *d_C_cublas;
+            Wrappers::C_Malloc(&d_A_cublas, M * K * sizeof(float));
+            Wrappers::C_Malloc(&d_B_cublas, K * N * sizeof(float));
+            Wrappers::C_Malloc(&d_C_cublas, M * N * sizeof(float));
+
+            Wrappers::C_Memcpy(d_A_cublas, a, M * K * sizeof(float), cudaMemcpyHostToDevice);
+            Wrappers::C_Memcpy(d_B_cublas, b, K * N * sizeof(float), cudaMemcpyHostToDevice);
+
+            float alpha = 1.0f;
+            float beta = 0.0f;
+            cublasHandle_t handle;
+            cudaEvent_t start_cublas, stop_cublas;
+            Wrappers::C_EventCreate(&start_cublas);
+            Wrappers::C_EventCreate(&stop_cublas);
+
+            CUBLAS_CHECK(cublasCreate_v2(&handle));
+
+            add_kernel_launcher(
+                "cublas",
+                [handle, N, M, K, alpha, d_B_cublas, d_A_cublas, beta, d_C_cublas]()
+                {
+                    CUBLAS_CHECK(cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_cublas, N,
+                                                d_A_cublas, K, &beta, d_C_cublas, N));
+                },
+                kernels);
+
+            for (int i = 0; i < 5; ++i)
+            {
+                kernels.at("cublas").kernel();
+            }
+            Wrappers::C_EventRecord(start_cublas);
+            for (int i = 0; i < runs; ++i)
+            {
+                kernels.at("cublas").kernel();
+            }
+            Wrappers::C_EventRecord(stop_cublas);
+            Wrappers::C_EventSynchronize(stop_cublas);
+            float ms_cublas = 0;
+            Wrappers::C_EventElapsedTime(&ms_cublas, start_cublas, stop_cublas);
+            double ms_real_cublas = ms_cublas / double(runs);
+            CODECUDA_PRINTLN("Average Time cublas (ms): ", ms_real_cublas);
+            double gflops_cublas = double(double(flops) * 1.0e-9) / double(ms_real_cublas / 1000.0);
+            CODECUDA_PRINTLN("GFLOPS/s cublas: ", gflops_cublas);
+            // personal vs cublas
+            float *d_C_err;
+            Wrappers::C_Malloc(&d_C_err, M * N * sizeof(float));
+
+            dim3 block_err(128, 1, 1);
+            dim3 grid_err(ceil(double(M * N) / 128.0), 1, 1);
+            code_kernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_C_cublas, d_C_err);
+            Wrappers::C_GetLastError();
+            Wrappers::C_DeviceSynchronize();
+
+            float *errMatrix;
+            errMatrix = new float[M * N];
+            Wrappers::C_Memcpy(errMatrix, d_C_err, M * N * sizeof(float), cudaMemcpyDeviceToHost);
+
+            float err_average = 0.0f;
+            float max_error = 0.0f;
             for (int i = 0; i < M * N; ++i)
             {
-                err_average_cpu += errMatrix_cpu[i];
-                max_error_cpu = max(max_error_cpu, errMatrix_cpu[i]);
+                err_average += errMatrix[i];
+                float currErr = errMatrix[i];
+                if (currErr > max_error)
+                {
+                    max_error = currErr;
+                }
             }
-            err_average_cpu /= float(M * N);
-            testPassed = max_error_cpu < 0.00001;
+            err_average /= float(M * N);
 
-            errOutput += std::format("Average error (personal vs cpu): {:.6f}\n", err_average_cpu);
-            errOutput += std::format("Max error(personal vs cpu): {:.6f}\n", max_error_cpu);
-            Wrappers::C_Free(d_h_C);
-            free(h_C);
+            testPassed = max_error < 0.001f;
+
+            std::string errOutput = "";
+            errOutput += "----- Matmul compare -----\n";
+            errOutput += std::format("Average error (personal vs cublas): {:.6f}\n", err_average);
+            errOutput += std::format("Max error(personal vs cublas): {:.6f}\n", max_error);
+
+            if (M * N < 8192)
+            {
+                // personal vs cpu
+                auto *h_C = (float *)malloc(M * N * sizeof(float));
+                cpu_matmul(M, N, K, a, b, h_C);
+                float *d_h_C;
+                Wrappers::C_Malloc(&d_h_C, M * N * sizeof(float));
+
+                Wrappers::C_Memcpy(d_h_C, h_C, M * N * sizeof(float), cudaMemcpyHostToDevice);
+
+                code_kernels::k_check_mat_err<<<grid_err, block_err>>>(M, N, d_C, d_h_C, d_C_err);
+                Wrappers::C_GetLastError();
+                Wrappers::C_DeviceSynchronize();
+                float *errMatrix_cpu;
+                errMatrix_cpu = new float[M * N];
+                Wrappers::C_Memcpy(errMatrix_cpu, d_C_err, M * N * sizeof(float), cudaMemcpyDeviceToHost);
+
+                float err_average_cpu = 0.0f;
+                float max_error_cpu = 0.0f;
+                for (int i = 0; i < M * N; ++i)
+                {
+                    err_average_cpu += errMatrix_cpu[i];
+                    max_error_cpu = max(max_error_cpu, errMatrix_cpu[i]);
+                }
+                err_average_cpu /= float(M * N);
+                testPassed = max_error_cpu < 0.00001;
+
+                errOutput += std::format("Average error (personal vs cpu): {:.6f}\n", err_average_cpu);
+                errOutput += std::format("Max error(personal vs cpu): {:.6f}\n", max_error_cpu);
+                Wrappers::C_Free(d_h_C);
+                free(h_C);
+            }
+
+            // print
+            if (!testPassed)
+            {
+                errOutput += std::format("-FAILED-\n");
+            }
+            else
+            {
+                errOutput +=
+                    std::format("Performance (personal vs cublas): {:.2f}%\n", (gflops / gflops_cublas) * 100.0);
+                errOutput += std::format("-PASSED-\n");
+            }
+
+            c_matmul_benchmark_result benchmark_result;
+            benchmark_result.M = M;
+            benchmark_result.N = N;
+            benchmark_result.K = K;
+            benchmark_result.runs = runs;
+            benchmark_result.personal_ms = ms_real;
+            benchmark_result.personal_gflops = gflops;
+            benchmark_result.cublas_ms = ms_real_cublas;
+            benchmark_result.cublas_gflops = gflops_cublas;
+            benchmark_result.average_error = err_average;
+            benchmark_result.max_error = max_error;
+            benchmark_result.passed = testPassed;
+
+            const char *benchmark_json_path = std::getenv("CODECUDA_BENCHMARK_JSON");
+            if (benchmark_json_path != nullptr && benchmark_json_path[0] != '\0')
+            {
+                C_SaveMatmulBenchmarkResultJson(benchmark_json_path, benchmark_result);
+            }
+
+            CODECUDA_PRINTLN(errOutput.c_str());
+
+            Wrappers::C_Memcpy(c, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
+
+            Wrappers::C_Free(d_A);
+            Wrappers::C_Free(d_B);
+            Wrappers::C_Free(d_C);
+            Wrappers::C_Free(d_A_cublas);
+            Wrappers::C_Free(d_B_cublas);
+            Wrappers::C_Free(d_C_cublas);
+            Wrappers::C_Free(d_C_err);
+            Wrappers::C_EventDestroy(start);
+            Wrappers::C_EventDestroy(stop);
+            Wrappers::C_EventDestroy(start_cublas);
+            Wrappers::C_EventDestroy(stop_cublas);
+            CUBLAS_CHECK(cublasDestroy_v2(handle));
+            delete[] errMatrix;
         }
 
-        // print
-        if (!testPassed)
-        {
-            errOutput += std::format("-FAILED-\n");
-        }
-        else
-        {
-            errOutput += std::format("Performance (personal vs cublas): {:.2f}%\n", (gflops / gflops_cublas) * 100.0);
-            errOutput += std::format("-PASSED-\n");
-        }
-
-        CODECUDA_PRINTLN(errOutput.c_str());
-
-        Wrappers::C_Memcpy(c, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
-
-        Wrappers::C_Free(d_A);
-        Wrappers::C_Free(d_B);
-        Wrappers::C_Free(d_C);
-        Wrappers::C_Free(d_A_cublas);
-        Wrappers::C_Free(d_B_cublas);
-        Wrappers::C_Free(d_C_cublas);
-        Wrappers::C_Free(d_C_err);
-        Wrappers::C_EventDestroy(start);
-        Wrappers::C_EventDestroy(stop);
-        Wrappers::C_EventDestroy(start_cublas);
-        Wrappers::C_EventDestroy(stop_cublas);
-        CUBLAS_CHECK(cublasDestroy_v2(handle));
-        delete[] errMatrix;
-    }
-
-
+    } // namespace benchmarking
     void C_Shutdown() { cublasShutdown(); }
 
 } // namespace CodeCuda
