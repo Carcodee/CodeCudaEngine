@@ -414,11 +414,13 @@ namespace code_kernels
         //number of subtiles on the warptile in WN
         WNITER = 2
         //number of subtiles on the warptile in WM
-        WMITER = 2
 
         //number of entries in N used per thread
         TN = 4
+        TM = 4
 
+        //Number of subtiles across WM
+        WMITER = (WM * WN)/(WSIZE * TM * TN * WNITER)
         //size of the warpsubtile in WN
         WSUBN = WN / WNITER = 64 / 2 = 32
 
@@ -454,19 +456,16 @@ namespace code_kernels
         constexpr uint32_t WM = 32;
         constexpr uint32_t WCOLS = BN / WN;
         constexpr uint32_t WROWS = BM / WM;
-
         constexpr uint32_t WNITER = 2;
-        constexpr uint32_t WMITER = 2;
 
         constexpr uint32_t TN = 4;
+        constexpr uint32_t TM = 4;
 
+        constexpr uint32_t WMITER = (WM * WN) / (WSIZE * TM * TN * WNITER);
         constexpr uint32_t WSUBN = WN / WNITER;
         constexpr uint32_t WSUBM = WM / WMITER;
         constexpr uint32_t WTCOLS = WSUBN / TN;
         constexpr uint32_t WTROWS = WSIZE / WTCOLS;
-
-        constexpr uint32_t TM = WSUBM / WTROWS;
-
 
         // number of subtiles calculated per thread
 
@@ -491,9 +490,9 @@ namespace code_kernels
         // we place c on the warp block
         c += (blockIdx.y * BM * N + blockIdx.x * BN) + (warp_row * WM * N + warp_col * WN);
 
-        float thread_results[TM * TN * WMITER * WNITER] = {0.0};
-        float reg_m[TM * WMITER] = {0.0};
-        float reg_n[TN * WNITER] = {0.0};
+        float thread_results[TM * TN * WMITER * WNITER] = {0.0f};
+        float reg_m[TM * WMITER] = {0.0f};
+        float reg_n[TN * WNITER] = {0.0f};
 
         uint32_t tile_count = ceilf(float(K) / float(BK));
 
@@ -503,8 +502,9 @@ namespace code_kernels
         uint32_t a_col = threadIdx.x % BM_COLS;
         uint32_t a_row = threadIdx.x / BM_COLS;
 
+        uint32_t BN_COLS = BSIZE / BN;
 
-        for (int i = 0; i < tile_count; ++i)
+            for (int i = 0; i < tile_count; ++i)
         {
             // // transpose A for vectorized loads on the outer product
             float4 *a_buff = reinterpret_cast<float4 *>(&a[a_row * K + a_col * a_col_offset]);
@@ -533,7 +533,8 @@ namespace code_kernels
                     for (int tm_idx = 0; tm_idx < TM; ++tm_idx)
                     {
                         reg_m[TM * wm_iter_idx + tm_idx] =
-                            a_s[(dot_idx * BM) + (warp_row * WM) + (WSUBM * wm_iter_idx) + (TM * thread_row_in_warp) + tm_idx];
+                            a_s[(dot_idx * BM) + (warp_row * WM) + (WSUBM * wm_iter_idx) + (TM * thread_row_in_warp) +
+                                tm_idx];
                     }
                 }
 
@@ -542,7 +543,8 @@ namespace code_kernels
                     for (int tn_idx = 0; tn_idx < TN; ++tn_idx)
                     {
                         reg_n[TN * wn_iter_idx + tn_idx] =
-                            b_s[(dot_idx * BN) + (warp_col * WN) + (WSUBN * wn_iter_idx) + (TN * thread_col_in_warp) + tn_idx];
+                            b_s[(dot_idx * BN) + (warp_col * WN) + (WSUBN * wn_iter_idx) + (TN * thread_col_in_warp) +
+                                tn_idx];
                     }
                 }
 
@@ -554,7 +556,8 @@ namespace code_kernels
                         {
                             for (int reg_m_idx = 0; reg_m_idx < TM; ++reg_m_idx)
                             {
-                                thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TN * reg_m_idx) + (TN * wn_iter_idx) + reg_n_idx] += 
+                                thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TN * reg_m_idx) +
+                                               (TN * wn_iter_idx) + reg_n_idx] +=
                                     reg_m[TM * wm_iter_idx + reg_m_idx] * reg_n[TN * wn_iter_idx + reg_n_idx];
                             }
                         }
@@ -574,11 +577,22 @@ namespace code_kernels
                 c_temp += wm_iter_idx * WSUBM * N + wn_iter_idx * WSUBN;
                 for (int tm_idx = 0; tm_idx < TM; ++tm_idx)
                 {
-                    for (int tn_idx = 0; tn_idx < TN; ++tn_idx)
+                    for (int tn_idx = 0; tn_idx < TN; tn_idx += 4)
                     {
                         // vectorized loads for c+ tm_idx * N + tn_idx
-                        c_temp[(thread_row_in_warp * TM * N) + (TN * thread_col_in_warp) + tm_idx * N + tn_idx] =
-                            thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) + (TN * wn_iter_idx) + tn_idx];
+                        float4 tmp = reinterpret_cast<float4 *>(
+                            &c_temp[(thread_row_in_warp * TM * N) + (TN * thread_col_in_warp) + tm_idx * N])[0];
+
+                        tmp.x = thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
+                                               (TN * wn_iter_idx + 0)];
+                        tmp.y = thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
+                                               (TN * wn_iter_idx + 1)];
+                        tmp.z = thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
+                                               (TN * wn_iter_idx + 2)];
+                        tmp.w = thread_results[(WNITER * TM * TN * wm_iter_idx) + (WNITER * TM * tm_idx) +
+                                               (TN * wn_iter_idx + 3)];
+                        reinterpret_cast<float4 *>(
+                            &c_temp[(thread_row_in_warp * TM * N) + (TN * thread_col_in_warp) + tm_idx * N])[0] = tmp;
                         // ;
                     }
                 }
@@ -920,10 +934,8 @@ namespace CodeCuda
         Wrappers::C_EventElapsedTime(&ms_cublas, start_cublas, stop_cublas);
         double ms_real_cublas = ms_cublas / double(runs);
         CODECUDA_PRINTLN("Average Time cublas (ms): ", ms_real_cublas);
-        gflops = double((flops) * 1.0e-9f) / double(ms_real_cublas / 1000.0f);
-        CODECUDA_PRINTLN("GFLOPS/s cublas: ", gflops);
-
-
+        double gflops_cublas = double(double(flops) * 1.0e-9) / double(ms_real_cublas / 1000.0);
+        CODECUDA_PRINTLN("GFLOPS/s cublas: ", gflops_cublas);
         // personal vs cublas
         float *d_C_err;
         Wrappers::C_Malloc(&d_C_err, M * N * sizeof(float));
@@ -954,11 +966,11 @@ namespace CodeCuda
         testPassed = max_error < 0.001f;
 
         std::string errOutput = "";
-        errOutput += "----- Matmul err compare -----\n";
+        errOutput += "----- Matmul compare -----\n";
         errOutput += std::format("Average error (personal vs cublas): {:.6f}\n", err_average);
         errOutput += std::format("Max error(personal vs cublas): {:.6f}\n", max_error);
 
-        if (M * N < 10000)
+        if (M * N < 8192)
         {
             // personal vs cpu
             auto *h_C = (float *)malloc(M * N * sizeof(float));
@@ -998,6 +1010,7 @@ namespace CodeCuda
         }
         else
         {
+            errOutput += std::format("Performance (personal vs cublas): {:.2f}%\n", (gflops / gflops_cublas) * 100.0);
             errOutput += std::format("-PASSED-\n");
         }
 
