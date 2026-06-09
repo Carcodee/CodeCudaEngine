@@ -65,7 +65,7 @@ int main()
     CodeCuda::C_Init();
     TestMatmulShapes();
     CodeCuda::C_Shutdown();
-    // while (true)
-    // {
-    // }
+    while (true)
+    {
+    }
 }

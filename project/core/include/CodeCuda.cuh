@@ -13,6 +13,9 @@ namespace CodeCuda
     void C_Init();
     void C_Matmul(const int M, const int N, const int K, const float* a, const float* b,
                   float* c);
+
+    void C_Shutdown();
+    
     namespace CodeBenchmarking
     {
         
@@ -35,7 +38,6 @@ namespace CodeCuda
                       float* c, int runs);
         void C_SaveMatmulBenchmarkResultJson(const char* path, const c_matmul_benchmark_result& result);
     }
-    void C_Shutdown();
     
 }
 
