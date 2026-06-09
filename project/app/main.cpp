@@ -45,7 +45,10 @@ void TestMatmulShapes()
 //         MatrixSizes{512, 256, 128},
 //         */
         MatrixSizes{128, 128, 128},
+        MatrixSizes{256, 256, 256},
+        MatrixSizes{512, 512, 512},
         MatrixSizes{1024, 1024, 1024},
+        MatrixSizes{2048, 2048, 2048},
         MatrixSizes{4096, 4096, 4096},
         // MatrixSizes{8192, 8192, 8192},
     };
