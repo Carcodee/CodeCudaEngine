@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1060" height="560" viewBox="0 0 1060 560">
+<style>
+text{font-family:Segoe UI,Arial,sans-serif;fill:#172033}
+.title{font-size:28px;font-weight:700}
+.sub{font-size:13px;fill:#5d6678}
+.axis{stroke:#c8ced8;stroke-width:1}
+.grid{stroke:#e7eaf0;stroke-width:1}
+.label{font-size:12px;fill:#3f4758}
+.tick{font-size:11px;fill:#6b7280}
+.personal{fill:#2f80ed}
+.cublas{fill:#14a06f}
+.badge{font-size:11px;font-weight:600;fill:white}
+</style>
+<rect width="100%" height="100%" fill="#fbfcfe"/>
+<text x="32" y="38" class="title">GEMM Benchmark Results</text>
+<text x="32" y="58" class="sub">Best tuned kernel result per shape compared with cuBLAS</text>
+<line x1="90" y1="450.0" x2="1020" y2="450.0" class="grid"/>
+<text x="78" y="454.0" text-anchor="end" class="tick">0</text>
+<line x1="90" y1="374.0" x2="1020" y2="374.0" class="grid"/>
+<text x="78" y="378.0" text-anchor="end" class="tick">5772</text>
+<line x1="90" y1="298.0" x2="1020" y2="298.0" class="grid"/>
+<text x="78" y="302.0" text-anchor="end" class="tick">11544</text>
+<line x1="90" y1="222.0" x2="1020" y2="222.0" class="grid"/>
+<text x="78" y="226.0" text-anchor="end" class="tick">17317</text>
+<line x1="90" y1="146.0" x2="1020" y2="146.0" class="grid"/>
+<text x="78" y="150.0" text-anchor="end" class="tick">23089</text>
+<line x1="90" y1="70.0" x2="1020" y2="70.0" class="grid"/>
+<text x="78" y="74.0" text-anchor="end" class="tick">28861</text>
+<line x1="90" y1="70" x2="90" y2="450" class="axis"/>
+<line x1="90" y1="450" x2="1020" y2="450" class="axis"/>
+<text x="24" y="260.0" transform="rotate(-90 24 260.0)" class="label">GFLOPS</text>
+<rect x="146.2" y="445.7" width="54.0" height="4.3" rx="5" class="personal"/>
+<rect x="212.2" y="445.8" width="54.0" height="4.2" rx="5" class="cublas"/>
+<text x="173.2" y="437.7" text-anchor="middle" class="tick">330</text>
+<text x="239.2" y="437.8" text-anchor="middle" class="tick">321</text>
+<text x="206.2" y="474" text-anchor="middle" class="label">128x128x128</text>
+<text x="206.2" y="492" text-anchor="middle" class="tick">102.8% of cuBLAS</text>
+<text x="206.2" y="508" text-anchor="middle" class="tick">0.013 ms vs 0.013 ms</text>
+<rect x="378.8" y="265.7" width="54.0" height="184.3" rx="5" class="personal"/>
+<rect x="444.8" y="209.5" width="54.0" height="240.5" rx="5" class="cublas"/>
+<text x="405.8" y="257.7" text-anchor="middle" class="tick">14000</text>
+<text x="471.8" y="201.5" text-anchor="middle" class="tick">18268</text>
+<text x="438.8" y="474" text-anchor="middle" class="label">1024x1024x1024</text>
+<text x="438.8" y="492" text-anchor="middle" class="tick">76.6% of cuBLAS</text>
+<text x="438.8" y="508" text-anchor="middle" class="tick">0.153 ms vs 0.118 ms</text>
+<rect x="611.2" y="193.7" width="54.0" height="256.3" rx="5" class="personal"/>
+<rect x="677.2" y="146.8" width="54.0" height="303.2" rx="5" class="cublas"/>
+<text x="638.2" y="185.7" text-anchor="middle" class="tick">19463</text>
+<text x="704.2" y="138.8" text-anchor="middle" class="tick">23031</text>
+<text x="671.2" y="474" text-anchor="middle" class="label">2048x2048x2048</text>
+<text x="671.2" y="492" text-anchor="middle" class="tick">84.5% of cuBLAS</text>
+<text x="671.2" y="508" text-anchor="middle" class="tick">0.883 ms vs 0.746 ms</text>
+<rect x="843.8" y="179.8" width="54.0" height="270.2" rx="5" class="personal"/>
+<rect x="909.8" y="110.7" width="54.0" height="339.3" rx="5" class="cublas"/>
+<text x="870.8" y="171.8" text-anchor="middle" class="tick">20520</text>
+<text x="936.8" y="102.7" text-anchor="middle" class="tick">25769</text>
+<text x="903.8" y="474" text-anchor="middle" class="label">4096x4096x4096</text>
+<text x="903.8" y="492" text-anchor="middle" class="tick">79.6% of cuBLAS</text>
+<text x="903.8" y="508" text-anchor="middle" class="tick">6.698 ms vs 5.334 ms</text>
+<rect x="810" y="22" width="14" height="14" rx="3" class="personal"/>
+<text x="830" y="34" class="label">CodeCuda warp_tilling</text>
+<rect x="810" y="44" width="14" height="14" rx="3" class="cublas"/>
+<text x="830" y="56" class="label">cuBLAS</text>
+</svg>
