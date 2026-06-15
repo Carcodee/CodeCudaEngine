@@ -1,7 +1,9 @@
 include(GNUInstallDirs)
 
 add_library(codeCudaLib
-        src/CodeCuda.cu)
+        src/CodeCuda.cu
+        src/CodeKernels.hpp
+        src/CudaEngineInclude.hpp)
 
 find_package(CUDAToolkit REQUIRED)
 
