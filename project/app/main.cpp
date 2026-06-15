@@ -2,6 +2,7 @@
 // Created by carlo on 2026-01-17.
 //
 
+#include "../core/src/common/Logger.hpp"
 #include "CodeInclude.h"
 #include "vector"
 void TestLib(int M, int N, int K, int runs)
@@ -17,6 +18,7 @@ void TestLib(int M, int N, int K, int runs)
     
     h_c.Full(0.0f);
     
+    CODECUDA_PRINTLN("s", h_c.Get_Data()[0]);
     
     CodeCuda::CodeBenchmarking::C_Matmul_Test(M, N, K, h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data(), runs);
 

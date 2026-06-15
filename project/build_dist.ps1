@@ -1,6 +1,7 @@
 param(
     [string]$Config = "Debug",
     [string]$BuildDir = "cmake-build-dist-cuda12",
+    [Alias("o", "Output")]
     [string]$DistDir = "dist",
     [string]$CudaArchitectures = "89-real",
     [string]$CudaToolkitRoot = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
@@ -54,9 +55,19 @@ function Invoke-Native {
     }
 }
 
+function Resolve-OutputPath {
+    param([string]$Path)
+
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path $ProjectRoot $Path))
+}
+
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BuildPath = Join-Path $ProjectRoot $BuildDir
-$DistPath = Join-Path $ProjectRoot $DistDir
+$DistPath = Resolve-OutputPath $DistDir
 $script:VcVars64 = Find-VcVars64
 
 if (-not (Test-Path $CudaToolkitRoot)) {

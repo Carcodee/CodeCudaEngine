@@ -641,7 +641,20 @@ namespace code_kernels
             c[idx] = fabsf(a[idx] - b[idx]);
         }
 
-    } // namespace GEMM
+    } // namespace code_math
+    
+    namespace code_tests
+    {
+        
+        __global__ void k_add_point_five(int size, float *data)
+        {
+            uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx >= size)
+                return;
+            data[idx] += 0.5f;
+        }
+        
+    }
 } // namespace code_kernels
 
 #endif // CODEKERNELS_HPP
