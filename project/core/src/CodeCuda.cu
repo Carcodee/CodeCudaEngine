@@ -7,18 +7,8 @@
 
 namespace CodeCuda
 {
-    class CudaContext
-    {
-    public:
-        cudaStream_t stream = nullptr;
 
-        int device = -1;
-        bool initialized = false;
-    };
-
-    inline CudaContext cuda_context{};
-
-    C_Res C_Init()
+    C_Res C_Init(CodeCudaContext* code_cuda_context)
     {
         CODECUDA_PRINTLN("Starting CodeCudaEngine Init");
         CODE_API::CW_FreeZero();
@@ -49,14 +39,14 @@ namespace CodeCuda
 
         CODE_API::CW_SetDevice(0);
 
-        CODE_API::CW_StreamCreate(&cuda_context.stream);
-        cuda_context.initialized = true;
+        CODE_API::CW_StreamCreate(&code_cuda_context->stream);
+        code_cuda_context->initialized = true;
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("");
         CODECUDA_PRINTLN("");
         return C_Res::OK;
     }
-    C_Res C_InitFromExternalDevice(uint8_t *vkDeviceUUID, size_t UUID_SIZE)
+    C_Res C_InitFromExternalDevice(CodeCudaContext* code_cuda_context, uint8_t *vkDeviceUUID, size_t UUID_SIZE)
     {
         CODECUDA_PRINTLN("Starting CodeCudaEngine Init");
         CODE_API::CW_FreeZero();
@@ -95,67 +85,15 @@ namespace CodeCuda
         }
 
         CODE_API::CW_SetDevice(current_device);
-        CODE_API::CW_StreamCreate(&cuda_context.stream);
-        cuda_context.initialized = true;
+        CODE_API::CW_StreamCreate(&code_cuda_context->stream);
+        code_cuda_context->initialized = true;
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("GPU Device index: ", current_device, "\nName: ", device_prop.name,
                          " \nWith compute capability: ", device_prop.major, device_prop.minor);
         return C_Res::OK;
     }
-
-    C_Res C_Shutdown()
-    {
-        CODECUDA_PRINTLN("Shutdown: CodeCudaEngine");
-        if (!cuda_context.initialized)
-            return C_Res::ERR;
-
-        CODE_API::CW_StreamSynchronize(cuda_context.stream);
-        CODE_API::CW_StreamDestroy(cuda_context.stream);
-
-        cuda_context.stream = nullptr;
-        cuda_context.device = -1;
-        cuda_context.initialized = false;
-        return C_Res::OK;
-    }
-
-    C_Res C_Matmul(const int M, const int N, const int K, const float *a, const float *b, float *c)
-    {
-        if (c == nullptr)
-        {
-            CODECUDA_LOG_WARNING("target buffer is empty");
-            return C_Res::ERR;
-        }
-        float *d_A, *d_B, *d_C;
-        CODE_API::CW_Malloc(&d_A, M * K * sizeof(float));
-        CODE_API::CW_Malloc(&d_B, K * N * sizeof(float));
-        CODE_API::CW_Malloc(&d_C, M * N * sizeof(float));
-
-        CODE_API::CW_Memcpy(d_A, a, M * K * sizeof(float), cudaMemcpyHostToDevice);
-        CODE_API::CW_Memcpy(d_B, b, K * N * sizeof(float), cudaMemcpyHostToDevice);
-
-        constexpr uint32_t BM = k_auto_tunning_params::BM;
-        constexpr uint32_t BK = k_auto_tunning_params::BK;
-        constexpr uint32_t BN = k_auto_tunning_params::BN;
-        constexpr uint32_t BSIZE = k_auto_tunning_params::BSIZE;
-
-        dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
-        dim3 block(BSIZE);
-        code_kernels::code_math::
-            k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), cuda_context.stream>>>(
-                M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-
-        CODE_API::CW_GetLastError();
-        CODE_API::CW_DeviceSynchronize();
-
-        CODE_API::CW_Memcpy(c, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
-
-        CODE_API::CW_Free(d_A);
-        CODE_API::CW_Free(d_B);
-        CODE_API::CW_Free(d_C);
-
-        return C_Res::OK;
-    }
-    C_Res C_ImportExternalBuffer(HANDLE win_handle, size_t buffer_size)
+    
+    C_Res C_ImportExternalBuffer(CodeCudaContext* code_cuda_context, HANDLE win_handle, size_t buffer_size)
     {
         cudaExternalMemoryHandleDesc cuda_external_memory_buffer_desc = {};
 
@@ -211,6 +149,69 @@ namespace CodeCuda
         return C_Res::OK;
     }
 
+    C_Res C_ImportExternalSemaphore(CodeCudaContext* code_cuda_context, HANDLE win_handle)
+    {
+        cudaExternalSemaphoreHandleDesc desc{};
+        desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
+        desc.handle.win32.handle = win_handle;
+
+        cudaExternalSemaphore_t cudaTimelineSemaphore = nullptr;
+
+        CODE_API::CW_ImportExternalSemaphore(&cudaTimelineSemaphore, &desc);
+
+        return C_Res::OK;
+    }
+    C_Res C_Shutdown(CodeCudaContext* code_cuda_context)
+    {
+        CODECUDA_PRINTLN("Shutdown: CodeCudaEngine");
+        if (!code_cuda_context->initialized)
+            return C_Res::ERR;
+
+        CODE_API::CW_StreamSynchronize(code_cuda_context->stream);
+        CODE_API::CW_StreamDestroy(code_cuda_context->stream);
+
+        code_cuda_context->stream = nullptr;
+        code_cuda_context->device = -1;
+        code_cuda_context->initialized = false;
+        return C_Res::OK;
+    }
+    C_Res C_Matmul(CodeCudaContext* code_cuda_context, const int M, const int N, const int K, const float *a, const float *b, float *c)
+    {
+        if (c == nullptr)
+        {
+            CODECUDA_LOG_WARNING("target buffer is empty");
+            return C_Res::ERR;
+        }
+        float *d_A, *d_B, *d_C;
+        CODE_API::CW_Malloc(&d_A, M * K * sizeof(float));
+        CODE_API::CW_Malloc(&d_B, K * N * sizeof(float));
+        CODE_API::CW_Malloc(&d_C, M * N * sizeof(float));
+
+        CODE_API::CW_Memcpy(d_A, a, M * K * sizeof(float), cudaMemcpyHostToDevice);
+        CODE_API::CW_Memcpy(d_B, b, K * N * sizeof(float), cudaMemcpyHostToDevice);
+
+        constexpr uint32_t BM = k_auto_tunning_params::BM;
+        constexpr uint32_t BK = k_auto_tunning_params::BK;
+        constexpr uint32_t BN = k_auto_tunning_params::BN;
+        constexpr uint32_t BSIZE = k_auto_tunning_params::BSIZE;
+
+        dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
+        dim3 block(BSIZE);
+        code_kernels::code_math::
+            k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), code_cuda_context->stream>>>(
+                M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+
+        CODE_API::CW_GetLastError();
+        CODE_API::CW_DeviceSynchronize();
+
+        CODE_API::CW_Memcpy(c, d_C, M * N * sizeof(float), cudaMemcpyDeviceToHost);
+
+        CODE_API::CW_Free(d_A);
+        CODE_API::CW_Free(d_B);
+        CODE_API::CW_Free(d_C);
+
+        return C_Res::OK;
+    }
 
     namespace CodeBenchmarking
     {
@@ -230,7 +231,7 @@ namespace CodeCuda
                 }
             }
         }
-        void C_Matmul_Test(const int M, const int N, const int K, const float *a, const float *b, float *c, int runs)
+        void C_Matmul_Test(CodeCudaContext* code_cuda_context, const int M, const int N, const int K, const float *a, const float *b, float *c, int runs)
         {
             if (c == nullptr)
             {
@@ -263,69 +264,69 @@ namespace CodeCuda
             using namespace code_kernels::code_math;
             Internals::add_kernel_launcher(
                 "naive_coalescent",
-                [N, M, K, d_A, d_B, d_C]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
                 {
                     dim3 grid(ceil(double(N) / 32.0f), ceil(double(M) / 32.0f));
                     dim3 block(32, 32);
-                    k_matmul_naive<<<grid, block, 0, cuda_context.stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_naive<<<grid, block, 0, code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
             Internals::add_kernel_launcher(
                 "smem",
-                [N, M, K, d_A, d_B, d_C]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
                 {
                     dim3 grid(ceil(double(M) / 32.0f), ceil(double(N) / 32.0f));
                     dim3 block(32 * 32);
-                    k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2, cuda_context.stream>>>(M, N, K, 1.0f, 0.0f,
+                    k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2, code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f,
                                                                                                     d_A, d_B, d_C);
                 },
                 kernels);
 
             Internals::add_kernel_launcher(
                 "b_tilling_col_tile",
-                [N, M, K, d_A, d_B, d_C]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BK * BK)));
                     dim3 block(BM * BK);
-                    k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float), cuda_context.stream>>>(
+                    k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float), code_cuda_context->stream>>>(
                         M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
             Internals::add_kernel_launcher(
                 "b_tilling_row_tile",
-                [N, M, K, d_A, d_B, d_C]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(M) / double(BM)), ceil(double(N) / double(BK * BK)));
                     dim3 block(BM * BK);
-                    k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float), cuda_context.stream>>>(
+                    k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float), code_cuda_context->stream>>>(
                         M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
             Internals::add_kernel_launcher(
                 "b_tilling_2d",
-                [N, M, K, d_A, d_B, d_C]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
                     dim3 block(BK * BK);
-                    k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), cuda_context.stream>>>(
+                    k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), code_cuda_context->stream>>>(
                         M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
             Internals::add_kernel_launcher(
                 "b_tilling_2d_transposed",
-                [N, M, K, d_A, d_B, d_C]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
@@ -333,13 +334,13 @@ namespace CodeCuda
                     dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
                     dim3 block(BK * BK);
                     k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
-                                                          cuda_context.stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                                                          code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
             Internals::add_kernel_launcher(
                 "warp_tilling",
-                [N, M, K, d_A, d_B, d_C]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
                 {
                     constexpr uint32_t BM = k_auto_tunning_params::BM;
                     constexpr uint32_t BK = k_auto_tunning_params::BK;
@@ -348,7 +349,7 @@ namespace CodeCuda
 
                     dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
                     dim3 block(BSIZE);
-                    k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), cuda_context.stream>>>(
+                    k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), code_cuda_context->stream>>>(
                         M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
@@ -429,7 +430,7 @@ namespace CodeCuda
 
             dim3 block_err(128, 1, 1);
             dim3 grid_err(ceil(double(M * N) / 128.0), 1, 1);
-            k_check_mat_err<<<grid_err, block_err, 0, cuda_context.stream>>>(M, N, d_C, d_C_cublas, d_C_err);
+            k_check_mat_err<<<grid_err, block_err, 0, code_cuda_context->stream>>>(M, N, d_C, d_C_cublas, d_C_err);
             CODE_API::CW_GetLastError();
             CODE_API::CW_DeviceSynchronize();
 
@@ -467,7 +468,7 @@ namespace CodeCuda
 
                 CODE_API::CW_Memcpy(d_h_C, h_C, M * N * sizeof(float), cudaMemcpyHostToDevice);
 
-                k_check_mat_err<<<grid_err, block_err, 0, cuda_context.stream>>>(M, N, d_C, d_h_C, d_C_err);
+                k_check_mat_err<<<grid_err, block_err, 0, code_cuda_context->stream>>>(M, N, d_C, d_h_C, d_C_err);
                 CODE_API::CW_GetLastError();
                 CODE_API::CW_DeviceSynchronize();
                 float *errMatrix_cpu;

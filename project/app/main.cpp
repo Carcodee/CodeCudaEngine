@@ -5,7 +5,7 @@
 #include "../core/src/common/Logger.hpp"
 #include "CodeInclude.h"
 #include "vector"
-void TestLib(int M, int N, int K, int runs)
+void TestLib(CodeCuda::CodeCudaContext* context,int M, int N, int K, int runs)
 {
     CodeCuda::c_matrix h_a (M, K);
     CodeCuda::c_matrix h_b (K, N);
@@ -20,14 +20,14 @@ void TestLib(int M, int N, int K, int runs)
     
     CODECUDA_PRINTLN("s", h_c.Get_Data()[0]);
     
-    CodeCuda::CodeBenchmarking::C_Matmul_Test(M, N, K, h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data(), runs);
+    CodeCuda::CodeBenchmarking::C_Matmul_Test(context, M, N, K, h_a.Get_Data(), h_b.Get_Data(), h_c.Get_Data(), runs);
 
     if (M <= 256)
     {   
         h_c.Print(false, true);
     }
 }
-void TestMatmulShapes()
+void TestMatmulShapes(CodeCuda::CodeCudaContext* context)
 {
     struct MatrixSizes
     {
@@ -58,16 +58,17 @@ void TestMatmulShapes()
     for (auto& size : sizes)
     {
         printf("----------------- Test with sizes: %d X %d X %d -----------------\n", size.M, size.K, size.N);
-        TestLib(size.M, size.N, size.K, 15);
+        TestLib(context, size.M, size.N, size.K, 15);
         printf("\n\n");
     }
     
 }
 int main()
 {
-    CodeCuda::C_Init();
-    TestMatmulShapes();
-    CodeCuda::C_Shutdown();
+    auto cuda_context = new CodeCuda::CodeCudaContext();
+    CodeCuda::C_Init(cuda_context);
+    TestMatmulShapes(cuda_context);
+    CodeCuda::C_Shutdown(cuda_context);
     while (true)
     {
     }
