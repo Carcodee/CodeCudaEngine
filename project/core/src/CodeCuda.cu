@@ -155,9 +155,7 @@ namespace CodeCuda
         desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
         desc.handle.win32.handle = win_handle;
 
-        cudaExternalSemaphore_t cudaTimelineSemaphore = nullptr;
-
-        CODE_API::CW_ImportExternalSemaphore(&cudaTimelineSemaphore, &desc);
+        CODE_API::CW_ImportExternalSemaphore(&code_cuda_context->external_semaphore, &desc);
 
         return C_Res::OK;
     }

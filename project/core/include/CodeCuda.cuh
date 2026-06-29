@@ -19,9 +19,12 @@ namespace CodeCuda
     class CodeCudaContext
     {
     public:
+        cudaExternalSemaphore_t external_semaphore = {};
+        
         cudaStream_t stream = nullptr;
         int device = -1;
         bool initialized = false;
+        
     };
 
     C_Res C_Init(CodeCudaContext* code_cuda_context);
@@ -29,9 +32,7 @@ namespace CodeCuda
     C_Res C_ImportExternalBuffer(CodeCudaContext* code_cuda_context, HANDLE win_handle, size_t buffer_size);
     C_Res C_ImportExternalSemaphore(CodeCudaContext* code_cuda_context, HANDLE win_handle);
     C_Res C_Shutdown(CodeCudaContext* code_cuda_context);
-    C_Res C_Matmul(int M, int N, int K, const float *a, const float *b, float *c);
-    
-
+    C_Res C_Matmul(CodeCudaContext* code_cuda_context, int M, int N, int K, const float *a, const float *b, float *c);
 
     namespace CodeBenchmarking
     {
