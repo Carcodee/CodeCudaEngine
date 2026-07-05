@@ -146,37 +146,11 @@ namespace CodeCuda
 
         this->kernel_launcher.kernel = [this](cudaStream_t stream)
         {
-            float* float_ptr = reinterpret_cast<float*>(this->mappedPtr);
-            
-            float* float_h = nullptr;
-            CODE_API::CW_HostMalloc(&float_h, 1024 * sizeof(float));
-            
-            CODE_API::CW_Memcpy(
-                float_h,
-                float_ptr,
-                1024 * sizeof(float),
-                cudaMemcpyDeviceToHost
-            );
-            
-            CODECUDA_PRINTLN("Before host:");
-            for (int i = 0; i < 1; ++i)
-            {
-                CODECUDA_PRINTLN("float_h[", i, "] = ", float_h[i]);
-            }
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
             this->fixed_time += time_step;
-            
             code_kernels::code_tests::k_sine<<<grid, block, 0, stream>>>(1024 * 1024, this->fixed_time, (float*)this->mappedPtr);
             
-            CODE_API::CW_Memcpy(float_h, float_ptr, 1024 * sizeof(float), cudaMemcpyKind::cudaMemcpyDeviceToHost);
-            CODECUDA_PRINT("After host: ");
-            for (int i = 0; i < 1; ++i)
-            {
-                CODECUDA_PRINTLN("float_ptr[", i, "] = ", float_h[i]);
-            }
-            
-            CODE_API::CW_HostFree(float_h);
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;

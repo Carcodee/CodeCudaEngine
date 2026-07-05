@@ -651,7 +651,8 @@ namespace code_kernels
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
-            data[idx] = sin(time * float(idx)) * 0.2f;
+            float idxNorm = float(idx)/ float(size);
+            data[idx] = sin(idxNorm * time);
         }
         
     }

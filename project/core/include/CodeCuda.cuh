@@ -44,7 +44,7 @@ namespace CodeCuda
         kernel_launcher kernel_launcher;
         cudaExternalSemaphore_t external_semaphore = {};
         void* mappedPtr = nullptr;
-        float time_step = 0.01f;
+        float time_step = 0.1f;
     private:
         float fixed_time = 0.0f;
     };
