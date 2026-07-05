@@ -66,9 +66,10 @@ void TestMatmulShapes(CodeCuda::CodeCudaContext* context)
 int main()
 {
     auto cuda_context = new CodeCuda::CodeCudaContext();
-    CodeCuda::C_Init(cuda_context);
+    cuda_context->C_Init();
     TestMatmulShapes(cuda_context);
-    CodeCuda::C_Shutdown(cuda_context);
+    cuda_context->C_Shutdown();
+    delete(cuda_context);
     while (true)
     {
     }

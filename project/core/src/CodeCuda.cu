@@ -5,10 +5,20 @@
 
 #include "CudaEngineInclude.hpp"
 
+
 namespace CodeCuda
 {
 
-    C_Res C_Init(CodeCudaContext* code_cuda_context)
+    void add_kernel_launcher(const std::string &name, std::function<void(cudaStream_t)> kernelFunc,
+                             std::map<std::string, kernel_launcher> &kernels_out)
+    {
+        kernel_launcher launcher;
+        launcher.kernel = std::move(kernelFunc);
+        kernels_out.try_emplace(name, launcher);
+    }
+
+
+    C_Res CodeCudaContext::C_Init()
     {
         CODECUDA_PRINTLN("Starting CodeCudaEngine Init");
         CODE_API::CW_FreeZero();
@@ -39,14 +49,37 @@ namespace CodeCuda
 
         CODE_API::CW_SetDevice(0);
 
-        CODE_API::CW_StreamCreate(&code_cuda_context->stream);
-        code_cuda_context->initialized = true;
+        CODE_API::CW_StreamCreate(&this->stream);
+        this->initialized = true;
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("");
         CODECUDA_PRINTLN("");
         return C_Res::OK;
     }
-    C_Res C_InitFromExternalDevice(CodeCudaContext* code_cuda_context, uint8_t *vkDeviceUUID, size_t UUID_SIZE)
+    
+    C_Res CodeCudaContext::C_WaitExternalSemaphore(uint64_t wait_value)
+    {
+        cudaExternalSemaphoreWaitParams waitParams{};
+        waitParams.params.fence.value = wait_value;
+        CODE_API::CW_WaitExternalSemaphoresAsync(&this->external_semaphore, &waitParams, 1,
+                                                 this->stream);
+        return C_Res::OK;
+    }
+    
+    C_Res CodeCudaContext::C_SignalExternalSemaphore(uint64_t signal_value)
+    {
+        cudaExternalSemaphoreSignalParams signal_params{};
+        signal_params.params.fence.value = signal_value;
+        CODE_API::CW_SignalExternalSemaphoresAsync(&this->external_semaphore, &signal_params, 1,
+                                                   this->stream);
+        return C_Res::OK;
+    }
+    C_Res CodeCudaContext::C_Execute()
+    {
+        this->kernel_launcher.kernel(this->stream);
+        return C_Res::OK;
+    }
+    C_Res CodeCudaContext::C_InitFromExternalDevice(uint8_t *vkDeviceUUID, size_t UUID_SIZE)
     {
         CODECUDA_PRINTLN("Starting CodeCudaEngine Init");
         CODE_API::CW_FreeZero();
@@ -85,15 +118,15 @@ namespace CodeCuda
         }
 
         CODE_API::CW_SetDevice(current_device);
-        CODE_API::CW_StreamCreate(&code_cuda_context->stream);
-        code_cuda_context->initialized = true;
+        CODE_API::CW_StreamCreate(&this->stream);
+        this->initialized = true;
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("GPU Device index: ", current_device, "\nName: ", device_prop.name,
                          " \nWith compute capability: ", device_prop.major, device_prop.minor);
         return C_Res::OK;
     }
-    
-    C_Res C_ImportExternalBuffer(CodeCudaContext* code_cuda_context, HANDLE win_handle, size_t buffer_size)
+
+    C_Res CodeCudaContext::C_ImportExternalBuffer(HANDLE win_handle, size_t buffer_size)
     {
         cudaExternalMemoryHandleDesc cuda_external_memory_buffer_desc = {};
 
@@ -109,71 +142,72 @@ namespace CodeCuda
         buffer_desc.offset = 0;
         buffer_desc.size = buffer_size;
 
-        void *cuda_ptr = nullptr;
+        CODE_API::CW_ExternalMemoryGetMappedBuffer(&this->mappedPtr, cuda_external_memory, &buffer_desc);
 
-        CODE_API::CW_ExternalMemoryGetMappedBuffer(&cuda_ptr, cuda_external_memory, &buffer_desc);
-        
-        
-        // float* float_ptr = reinterpret_cast<float*>(cuda_ptr);
-        //
-        // float* float_h = nullptr;
-        // CODE_API::CW_HostMalloc(&float_h, 1024 * sizeof(float));
-        //
-        // CODE_API::CW_Memcpy(
-        //     float_h,
-        //     float_ptr,
-        //     1024 * sizeof(float),
-        //     cudaMemcpyDeviceToHost
-        // );
-        //
-        // CODECUDA_PRINTLN("Before host:");
-        // for (int i = 0; i < 1024; ++i)
-        // {
-        //     CODECUDA_PRINTLN("float_h[", i, "] = ", float_h[i]);
-        // }
-        //
-        // dim3 grid(1024 / 128, 1, 1);
-        // dim3 block(128, 1, 1);
-        //
-        // code_kernels::code_tests::k_add_point_five<<<grid, block, 0, cuda_context.stream>>>(1024, float_ptr);
-        // CODE_API::CW_DeviceSynchronize();
-        //
-        // CODE_API::CW_Memcpy(float_h, float_ptr, 1024 * sizeof(float), cudaMemcpyKind::cudaMemcpyDeviceToHost);
-        // CODECUDA_PRINT("After host: ");
-        // for (int i = 0; i < 1024; ++i)
-        // {
-        //     CODECUDA_PRINTLN("float_ptr[", i, "] = ", float_h[i]);
-        // }
-        //
-        // CODE_API::CW_HostFree(float_h);
+        this->kernel_launcher.kernel = [this](cudaStream_t stream)
+        {
+            float* float_ptr = reinterpret_cast<float*>(this->mappedPtr);
+            
+            float* float_h = nullptr;
+            CODE_API::CW_HostMalloc(&float_h, 1024 * sizeof(float));
+            
+            CODE_API::CW_Memcpy(
+                float_h,
+                float_ptr,
+                1024 * sizeof(float),
+                cudaMemcpyDeviceToHost
+            );
+            
+            CODECUDA_PRINTLN("Before host:");
+            for (int i = 0; i < 1; ++i)
+            {
+                CODECUDA_PRINTLN("float_h[", i, "] = ", float_h[i]);
+            }
+            dim3 grid((1024 * 1024) / 128, 1, 1);
+            dim3 block(128, 1, 1);
+            this->fixed_time += time_step;
+            
+            code_kernels::code_tests::k_sine<<<grid, block, 0, stream>>>(1024 * 1024, this->fixed_time, (float*)this->mappedPtr);
+            
+            CODE_API::CW_Memcpy(float_h, float_ptr, 1024 * sizeof(float), cudaMemcpyKind::cudaMemcpyDeviceToHost);
+            CODECUDA_PRINT("After host: ");
+            for (int i = 0; i < 1; ++i)
+            {
+                CODECUDA_PRINTLN("float_ptr[", i, "] = ", float_h[i]);
+            }
+            
+            CODE_API::CW_HostFree(float_h);
+        };
+        CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
     }
 
-    C_Res C_ImportExternalSemaphore(CodeCudaContext* code_cuda_context, HANDLE win_handle)
+    C_Res CodeCudaContext::C_ImportExternalSemaphore(HANDLE win_handle)
     {
         cudaExternalSemaphoreHandleDesc desc{};
         desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreWin32;
         desc.handle.win32.handle = win_handle;
 
-        CODE_API::CW_ImportExternalSemaphore(&code_cuda_context->external_semaphore, &desc);
+        CODE_API::CW_ImportExternalSemaphore(&this->external_semaphore, &desc);
 
         return C_Res::OK;
     }
-    C_Res C_Shutdown(CodeCudaContext* code_cuda_context)
+    C_Res CodeCudaContext::C_Shutdown()
     {
         CODECUDA_PRINTLN("Shutdown: CodeCudaEngine");
-        if (!code_cuda_context->initialized)
+        if (!this->initialized)
             return C_Res::ERR;
 
-        CODE_API::CW_StreamSynchronize(code_cuda_context->stream);
-        CODE_API::CW_StreamDestroy(code_cuda_context->stream);
+        CODE_API::CW_StreamSynchronize(this->stream);
+        CODE_API::CW_StreamDestroy(this->stream);
 
-        code_cuda_context->stream = nullptr;
-        code_cuda_context->device = -1;
-        code_cuda_context->initialized = false;
+        this->stream = nullptr;
+        this->device = -1;
+        this->initialized = false;
         return C_Res::OK;
     }
-    C_Res C_Matmul(CodeCudaContext* code_cuda_context, const int M, const int N, const int K, const float *a, const float *b, float *c)
+    C_Res C_Matmul(CodeCudaContext *code_cuda_context, const int M, const int N, const int K, const float *a,
+                   const float *b, float *c)
     {
         if (c == nullptr)
         {
@@ -229,7 +263,8 @@ namespace CodeCuda
                 }
             }
         }
-        void C_Matmul_Test(CodeCudaContext* code_cuda_context, const int M, const int N, const int K, const float *a, const float *b, float *c, int runs)
+        void C_Matmul_Test(CodeCudaContext *code_cuda_context, const int M, const int N, const int K, const float *a,
+                           const float *b, float *c, int runs)
         {
             if (c == nullptr)
             {
@@ -257,74 +292,74 @@ namespace CodeCuda
             dim3 block(32, 32);
             */
 
-            std::map<std::string, Internals::kernel_launcher> kernels;
+            std::map<std::string, kernel_launcher> kernels;
 
             using namespace code_kernels::code_math;
-            Internals::add_kernel_launcher(
+            add_kernel_launcher(
                 "naive_coalescent",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
                 {
                     dim3 grid(ceil(double(N) / 32.0f), ceil(double(M) / 32.0f));
                     dim3 block(32, 32);
                     k_matmul_naive<<<grid, block, 0, code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
-            Internals::add_kernel_launcher(
+            add_kernel_launcher(
                 "smem",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
                 {
                     dim3 grid(ceil(double(M) / 32.0f), ceil(double(N) / 32.0f));
                     dim3 block(32 * 32);
-                    k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2, code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f,
-                                                                                                    d_A, d_B, d_C);
+                    k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2, code_cuda_context->stream>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
-            Internals::add_kernel_launcher(
+            add_kernel_launcher(
                 "b_tilling_col_tile",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BK * BK)));
                     dim3 block(BM * BK);
-                    k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float), code_cuda_context->stream>>>(
-                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float),
+                                           code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
-            Internals::add_kernel_launcher(
+            add_kernel_launcher(
                 "b_tilling_row_tile",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(M) / double(BM)), ceil(double(N) / double(BK * BK)));
                     dim3 block(BM * BK);
-                    k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float), code_cuda_context->stream>>>(
-                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
+                                           code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
-            Internals::add_kernel_launcher(
+            add_kernel_launcher(
                 "b_tilling_2d",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
                     dim3 block(BK * BK);
-                    k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), code_cuda_context->stream>>>(
-                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
+                                             code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
-            Internals::add_kernel_launcher(
+            add_kernel_launcher(
                 "b_tilling_2d_transposed",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
+                [N, M, K, d_A, d_B, d_C](cudaStream_t stream)
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
@@ -332,13 +367,14 @@ namespace CodeCuda
                     dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
                     dim3 block(BK * BK);
                     k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
-                                                          code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                                                          stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B,
+                                                                                       d_C);
                 },
                 kernels);
 
-            Internals::add_kernel_launcher(
+            add_kernel_launcher(
                 "warp_tilling",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context]()
+                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
                 {
                     constexpr uint32_t BM = k_auto_tunning_params::BM;
                     constexpr uint32_t BK = k_auto_tunning_params::BK;
@@ -347,15 +383,15 @@ namespace CodeCuda
 
                     dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
                     dim3 block(BSIZE);
-                    k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), code_cuda_context->stream>>>(
-                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
+                                               code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
 
             for (int i = 0; i < 5; ++i)
             {
-                kernels.at("warp_tilling").kernel();
+                kernels.at("warp_tilling").kernel(code_cuda_context->stream);
             }
             CODE_API::CW_GetLastError();
             CODE_API::CW_DeviceSynchronize();
@@ -363,7 +399,7 @@ namespace CodeCuda
             CODE_API::CW_EventRecord(start);
             for (int i = 0; i < runs; ++i)
             {
-                kernels.at("warp_tilling").kernel();
+                kernels.at("warp_tilling").kernel(code_cuda_context->stream);
             }
             CODE_API::CW_GetLastError();
 
@@ -396,9 +432,9 @@ namespace CodeCuda
 
             CUBLAS_CHECK(cublasCreate_v2(&handle));
 
-            Internals::add_kernel_launcher(
+            add_kernel_launcher(
                 "cublas",
-                [handle, N, M, K, alpha, d_B_cublas, d_A_cublas, beta, d_C_cublas]()
+                [handle, N, M, K, alpha, d_B_cublas, d_A_cublas, beta, d_C_cublas](cudaStream_t)
                 {
                     CUBLAS_CHECK(cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_cublas, N,
                                                 d_A_cublas, K, &beta, d_C_cublas, N));
@@ -407,12 +443,12 @@ namespace CodeCuda
 
             for (int i = 0; i < 5; ++i)
             {
-                kernels.at("cublas").kernel();
+                kernels.at("cublas").kernel(code_cuda_context->stream);
             }
             CODE_API::CW_EventRecord(start_cublas);
             for (int i = 0; i < runs; ++i)
             {
-                kernels.at("cublas").kernel();
+                kernels.at("cublas").kernel(code_cuda_context->stream);
             }
             CODE_API::CW_EventRecord(stop_cublas);
             CODE_API::CW_EventSynchronize(stop_cublas);

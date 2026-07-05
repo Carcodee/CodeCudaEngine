@@ -215,22 +215,7 @@ namespace CODE_API
     }
 } // namespace CODE_API
 
-namespace Internals
-{
-    struct kernel_launcher
-    {
-        std::function<void()> kernel;
-    };
-    
-    void add_kernel_launcher(const std::string &name, std::function<void()> kernelFunc,
-                             std::map<std::string, Internals::kernel_launcher> &kernels_out)
-    {
-        kernel_launcher launcher;
-        launcher.kernel = std::move(kernelFunc);
-        kernels_out.try_emplace(name, launcher);
-    }
 
-} // namespace Internals
 
 struct k_auto_tunning_params
 {
