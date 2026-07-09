@@ -9,6 +9,11 @@
 namespace CodeCuda
 {
 
+
+    static CodeSimulation::c_grid grid = {};
+    static float *grid_pressures_d;
+    static float *grid_div_d;
+    static float *grid_v_d;
     void add_kernel_launcher(const std::string &name, std::function<void(cudaStream_t)> kernelFunc,
                              std::map<std::string, kernel_launcher> &kernels_out)
     {
@@ -51,32 +56,36 @@ namespace CodeCuda
 
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
+        grid.InitGrid(50, 50);
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("");
         CODECUDA_PRINTLN("");
         return C_Res::OK;
     }
-    
+
     C_Res CodeCudaContext::C_WaitExternalSemaphore(uint64_t wait_value)
     {
         cudaExternalSemaphoreWaitParams waitParams{};
         waitParams.params.fence.value = wait_value;
-        CODE_API::CW_WaitExternalSemaphoresAsync(&this->external_semaphore, &waitParams, 1,
-                                                 this->stream);
+        CODE_API::CW_WaitExternalSemaphoresAsync(&this->external_semaphore, &waitParams, 1, this->stream);
         return C_Res::OK;
     }
-    
+
     C_Res CodeCudaContext::C_SignalExternalSemaphore(uint64_t signal_value)
     {
         cudaExternalSemaphoreSignalParams signal_params{};
         signal_params.params.fence.value = signal_value;
-        CODE_API::CW_SignalExternalSemaphoresAsync(&this->external_semaphore, &signal_params, 1,
-                                                   this->stream);
+        CODE_API::CW_SignalExternalSemaphoresAsync(&this->external_semaphore, &signal_params, 1, this->stream);
         return C_Res::OK;
     }
-    C_Res CodeCudaContext::C_Execute()
+    C_Res CodeCudaContext::C_ExecuteKernel()
     {
         this->kernel_launcher.kernel(this->stream);
+        return C_Res::OK;
+    }
+    C_Res CodeCudaContext::C_ExecuteCPU()
+    {
+        this->cpu_launcher.task();
         return C_Res::OK;
     }
     C_Res CodeCudaContext::C_InitFromExternalDevice(uint8_t *vkDeviceUUID, size_t UUID_SIZE)
@@ -144,13 +153,24 @@ namespace CodeCuda
 
         CODE_API::CW_ExternalMemoryGetMappedBuffer(&this->mappedPtr, cuda_external_memory, &buffer_desc);
 
+        this->cpu_launcher.task = [this]()
+        {
+            grid.UpdateSimulation();
+            if (grid_div_d)
+            {
+                CODE_API::CW_Free(grid_pressures_d);
+                CODE_API::CW_Free(grid_div_d);
+                CODE_API::CW_Free(grid_v_d);
+            }
+            
+            this->curr_t += time_step;
+        };
         this->kernel_launcher.kernel = [this](cudaStream_t stream)
         {
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
-            this->curr_t += time_step;
-            code_kernels::code_tests::k_sine<<<grid, block, 0, stream>>>(1024 * 1024, this->curr_t, (float*)this->mappedPtr);
-            
+            code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(
+                1024 * 1024, grid_v_d, grid_div_d, grid_pressures_d, (float *)this->mappedPtr);
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -340,9 +360,8 @@ namespace CodeCuda
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
                     dim3 block(BK * BK);
-                    k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
-                                                          stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B,
-                                                                                       d_C);
+                    k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float), stream>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 

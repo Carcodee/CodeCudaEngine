@@ -655,6 +655,15 @@ namespace code_kernels
             data[idx] = sin(idxNorm * time);
         }
         
+        __global__ void k_simulation_read(int size, float* grid_v, float* grid_div, float* grid_pressures, float *data)
+        {
+            uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx >= size)
+                return;
+            float idxNorm = float(idx)/ float(size);
+            // data[idx] = sin(idxNorm * time);
+        }
+        
     }
 } // namespace code_kernels
 

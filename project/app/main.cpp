@@ -70,9 +70,6 @@ int main()
     // TestMatmulShapes(cuda_context);
     // cuda_context->C_Shutdown();
     // delete(cuda_context);
-    CodeCuda::c_grid grid = CodeCuda::c_grid(10, 10);
-    grid.RunSimulation(100);
-    
     while (true)
     {
     }
