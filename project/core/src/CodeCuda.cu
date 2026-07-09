@@ -148,8 +148,8 @@ namespace CodeCuda
         {
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
-            this->fixed_time += time_step;
-            code_kernels::code_tests::k_sine<<<grid, block, 0, stream>>>(1024 * 1024, this->fixed_time, (float*)this->mappedPtr);
+            this->curr_t += time_step;
+            code_kernels::code_tests::k_sine<<<grid, block, 0, stream>>>(1024 * 1024, this->curr_t, (float*)this->mappedPtr);
             
         };
         CODE_API::CW_DeviceSynchronize();

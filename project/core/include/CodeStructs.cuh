@@ -331,20 +331,15 @@ namespace CodeCuda
         }
 
         int32_t *Shape() { return shape; }
-        static void PrintAnyMatrix(
-            int32_t M,
-            int32_t N,
-            float* data,
-            bool force_full_output = false,
-            bool padded = true)
+        static void PrintAnyMatrix(int32_t M, int32_t N, float *data, bool force_full_output = false,
+                                   bool padded = true)
         {
-            const std::string output =
-                padded
-                ? FormatMatrixOutput(M, N, data, force_full_output)
-                : FormatMatrixOutputNoPadding(M, N, data, force_full_output);
+            const std::string output = padded ? FormatMatrixOutput(M, N, data, force_full_output)
+                                              : FormatMatrixOutputNoPadding(M, N, data, force_full_output);
 
             printf("%s", output.c_str());
         }
+
     private:
         float *data = nullptr;
         float *data_t = nullptr;
@@ -353,6 +348,244 @@ namespace CodeCuda
         int32_t *shape = nullptr;
         int32_t data_size = 0;
     };
+    struct c_edge
+    {
+        float vec = 0.0f;
+        bool is_wall = false;
+        int GetState() { return is_wall ? 0 : 1; }
+    };
+    struct c_cell
+    {
+        float div = 0.0f;
+        bool is_wall = false;
+        int s = 0;
+        float density = 1.0f;
+        float pressure = 0.0f;
+    };
+    struct c_grid
+    {
+        c_grid(int width, int height)
+        {
+
+            this->edge_w = (width + 1);
+            this->edge_h = (height + 1);
+            this->w = width;
+            this->h = height;
+            this->dx = 1.0f / float(w);
+            grid.reserve(width * height);
+            u_edges.reserve(edge_w * edge_h);
+            v_edges.reserve(edge_w * edge_h);
+
+            for (int i = 0; i < u_edges.capacity(); ++i)
+            {
+                u_edges.emplace_back(c_edge{});
+                int x = i % edge_w;
+                int y = i / edge_w;
+                u_edges[i].is_wall = x == 0 || x == edge_w - 1 || y == 0 || y == edge_h - 1;
+            }
+            for (int i = 0; i < v_edges.capacity(); ++i)
+            {
+                v_edges.emplace_back(c_edge{});
+                int x = i % edge_w;
+                int y = i / edge_w;
+                v_edges[i].is_wall = x == 0 || x == edge_w - 1 || y == 0 || y == edge_h - 1;
+                // int v = i % 2 == 0 ? -1 : 1;
+                v_edges[i].vec = float(rand() % 1000) / 1000.0f;
+            }
+
+            for (int i = 0; i < grid.capacity(); ++i)
+            {
+                grid.emplace_back(c_cell{});
+                int x = i % w;
+                int y = i / w;
+                grid[i].is_wall = x == 0 || x == w - 1 || y == 0 || y == h - 1;
+                if (!grid[i].is_wall)
+                {
+                    valid_cell_count++;
+                }
+            }
+            for (int i = 0; i <grid.size(); ++i)
+            {
+                c_edge *edge_u_left_out = nullptr;
+                c_edge *edge_u_right_out = nullptr;
+                c_edge *edge_v_top_out = nullptr;
+                c_edge *edge_v_bottom_out = nullptr;
+                int x = i % w;
+                int y = i / w;
+                GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
+                grid[i].s = edge_u_left_out->GetState() + edge_u_right_out->GetState() + edge_v_top_out->GetState() + edge_v_bottom_out->GetState(); 
+            }
+        }
+        void RunSimulation(int steps)
+        {
+            solved_grid_states.resize(steps);
+            solved_grid_u.resize(steps);
+            solved_grid_v.resize(steps);
+            for (int i = 0; i < solved_grid_states.size(); ++i)
+            {
+                solved_grid_states[i].reserve(grid.size());
+            }
+            for (int i = 0; i < solved_grid_u.size(); ++i)
+            {
+                solved_grid_u[i].reserve(u_edges.size());
+            }
+            for (int i = 0; i < solved_grid_v.size(); ++i)
+            {
+                solved_grid_v[i].reserve(v_edges.size());
+            }
+            
+            for (int i = 0; i < steps; ++i)
+            {
+                Update();
+                memcpy(solved_grid_states[i].data(), grid.data(), grid.size() * sizeof(c_cell));
+                memcpy(solved_grid_u[i].data(), u_edges.data(), u_edges.size() * sizeof(c_edge));
+                memcpy(solved_grid_v[i].data(), v_edges.data(), v_edges.size() * sizeof(c_edge));
+            }
+            
+        }
+        void Update()
+        {
+            UpdateStep();
+            UpdateDiv();
+        }
+        void UpdateStep()
+        {
+            for (int i = 0; i < v_edges.size(); ++i)
+            {
+                if (v_edges[i].is_wall)
+                {
+                    continue;
+                }
+                v_edges[i].vec += (t * g);
+            }
+        }
+        void UpdateDiv()
+        {
+            int converged = 0;
+            int idx = 0;
+            for (int i = 0; i < grid.size(); ++i)
+            {
+                if (grid[i].is_wall)
+                {
+                    continue;
+                }
+                grid[i].pressure = 0.0f;
+            }
+            while (converged < valid_cell_count)
+            {
+                    for (int i = 0; i < grid.size(); ++i)
+                {
+                    if (grid[i].is_wall)
+                    {
+                        continue;
+                    }
+                    c_edge *edge_u_left_out = nullptr;
+                    c_edge *edge_u_right_out = nullptr;
+                    c_edge *edge_v_top_out = nullptr;
+                    c_edge *edge_v_bottom_out = nullptr;
+                    int x = i % w;
+                    int y = i / w;
+                    GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
+                    grid[i].div =
+                        Overrelaxation(edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec - edge_v_bottom_out->vec);
+                    int s = grid[i].s;
+                    grid[i].pressure += (grid[i].div/s) * (grid[i].density * dx / t);
+                    if (s == 0)
+                    {
+                        CODECUDA_PRINTLN("State must be at least one");
+                        continue;
+                    }
+                    edge_u_left_out->vec += grid[i].div *  edge_u_left_out->GetState() / s;
+                    edge_u_right_out->vec -= grid[i].div *  edge_u_right_out->GetState() / s;
+                    edge_v_bottom_out->vec += grid[i].div *  edge_v_bottom_out->GetState() / s;
+                    edge_v_top_out->vec -= grid[i].div *  edge_v_top_out->GetState() / s;
+                }
+                
+                converged = 0;
+                for (int i = 0; i < grid.size(); ++i)
+                {
+                    if (grid[i].is_wall)
+                    {
+                        continue;
+                    }
+                    if (std::abs(grid[i].div) < epsilon)
+                    {
+                        converged++;
+                    };
+                }
+                idx++;
+            }
+            PrintDivergenceConvergence(idx);
+        }
+
+
+        void GetCellEdges(int x, int y, c_edge *& edge_u_left_out, c_edge *& edge_u_right_out, c_edge *&edge_v_top_out,
+                          c_edge *&edge_v_bottom_out)
+        {
+
+            edge_u_left_out = &u_edges[y * edge_w + x];
+            edge_u_right_out = &u_edges[y * edge_w + (x + 1)];
+
+            edge_v_top_out = &v_edges[y * edge_w + x];
+            edge_v_bottom_out = &v_edges[(y + 1) * edge_w + x];
+        }
+        float Overrelaxation(float div)
+        {
+            return div * 1.9f;
+        }
+        void PrintDivergenceConvergence(int iteration)
+        {
+            int total = 0;
+            int converged = 0;
+            float maxAbsDiv = 0.0f;
+            float sumAbsDiv = 0.0f;
+
+            for (int i = 0; i < grid.size(); ++i)
+            {
+                if (grid[i].is_wall)
+                    continue;
+
+                int x = i % w;
+                int y = i / w;
+
+                float div = grid[i].div;
+                float absDiv = std::abs(div);
+
+                total++;
+                sumAbsDiv += absDiv;
+                maxAbsDiv = max(maxAbsDiv, absDiv);
+
+                if (absDiv < epsilon)
+                    converged++;
+            }
+
+            float avgAbsDiv = total > 0 ? sumAbsDiv / float(valid_cell_count) : 0.0f;
+
+            std::cout
+                << "iter " << iteration
+                << " | converged " << converged << "/" << total
+                << " | avgDiv " << avgAbsDiv
+                << " | maxDiv " << maxAbsDiv
+                << "\n";
+        }
+        const float epsilon = 0.0001f;
+        float t = 1.0f / 30.0f;
+        float g = -9.81f;
+        int w = -1;
+        int h = -1;
+        int valid_cell_count = 0;
+        int edge_w = -1;
+        int edge_h = -1;
+        float dx = 0.0f;
+        float dy = 0.0f;
+        std::vector<c_cell> grid;
+        std::vector<c_edge> u_edges;
+        std::vector<c_edge> v_edges;
+        std::vector<std::vector<c_cell>> solved_grid_states;
+        std::vector<std::vector<c_cell>> solved_grid_u;
+        std::vector<std::vector<c_cell>> solved_grid_v;
+    };
+    
 
 
 } // namespace CodeCuda
