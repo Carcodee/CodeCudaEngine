@@ -70,7 +70,12 @@ int main()
     // TestMatmulShapes(cuda_context);
     // cuda_context->C_Shutdown();
     // delete(cuda_context);
+    for (int i = 0; i < 100; ++i)
+    {
+        CodeCuda::C_UpdateSim();
+    }
     while (true)
     {
+        
     }
 }

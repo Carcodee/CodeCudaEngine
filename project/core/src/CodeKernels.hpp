@@ -655,13 +655,25 @@ namespace code_kernels
             data[idx] = sin(idxNorm * time);
         }
         
-        __global__ void k_simulation_read(int size, float* grid_v, float* grid_div, float* grid_pressures, float *data)
+        __global__ void k_simulation_read(int size, int sim_w, int sim_h, float* grid_v, float* grid_div, float* grid_pressures, float *data)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
+            int x = idx % 1024;
+            int y = idx / 1024;
             float idxNorm = float(idx)/ float(size);
-            // data[idx] = sin(idxNorm * time);
+            
+            auto uv = float2(float(x)/1024.0f, float(y)/1024.0f);
+            
+            auto pos = int2(uv.x * float(sim_w), uv.y * float(sim_h));
+            int sim_idx = sim_w * pos.y + pos.x;
+            float min = 0.0000001f;
+            float max = 0.00001f;
+            
+            float pres_norm = grid_pressures[sim_idx] - min / (max - min);
+            
+            data[idx] = pres_norm;
         }
         
     }

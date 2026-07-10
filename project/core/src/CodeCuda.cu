@@ -10,10 +10,10 @@ namespace CodeCuda
 {
 
 
-    static CodeSimulation::c_grid grid = {};
-    static float *grid_pressures_d;
-    static float *grid_div_d;
-    static float *grid_v_d;
+    static CodeSimulation::c_grid simulation = {};
+    static void *grid_pressures_d;
+    static void *grid_div_d;
+    static void *grid_v_d;
     void add_kernel_launcher(const std::string &name, std::function<void(cudaStream_t)> kernelFunc,
                              std::map<std::string, kernel_launcher> &kernels_out)
     {
@@ -56,7 +56,7 @@ namespace CodeCuda
 
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
-        grid.InitGrid(50, 50);
+        simulation.InitGrid(50, 50);
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("");
         CODECUDA_PRINTLN("");
@@ -134,6 +134,7 @@ namespace CodeCuda
                          " \nWith compute capability: ", device_prop.major, device_prop.minor);
         return C_Res::OK;
     }
+    
 
     C_Res CodeCudaContext::C_ImportExternalBuffer(HANDLE win_handle, size_t buffer_size)
     {
@@ -155,13 +156,30 @@ namespace CodeCuda
 
         this->cpu_launcher.task = [this]()
         {
-            grid.UpdateSimulation();
-            if (grid_div_d)
+            C_UpdateSim();
+            if (grid_div_d == nullptr)
             {
-                CODE_API::CW_Free(grid_pressures_d);
-                CODE_API::CW_Free(grid_div_d);
-                CODE_API::CW_Free(grid_v_d);
+                CODE_API::CW_Malloc(&grid_pressures_d, simulation.grid.size() * sizeof(float));
+                CODE_API::CW_Malloc(&grid_div_d, simulation.grid.size() * sizeof(float));
+                CODE_API::CW_Malloc(&grid_v_d, simulation.grid.size() * sizeof(float));
             }
+            std::vector<float> divs;
+            std::vector<float> v;
+            std::vector<float> pressures;
+            divs.resize(simulation.grid.size());
+            v.resize(simulation.grid.size());
+            pressures.resize(simulation.grid.size());
+            for (int i = 0; i < simulation.grid.size(); ++i)
+            {
+                divs[i] = simulation.grid[i].div;
+                v[i] = simulation.grid[i].cell_velocity;
+                pressures[i] = simulation.grid[i].pressure;
+            }
+            
+            
+            CODE_API::CW_Memcpy(grid_div_d, divs.data(),simulation.grid.size() * sizeof(float),cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(grid_pressures_d, v.data(),simulation.grid.size() * sizeof(float),cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(grid_v_d, pressures.data(),simulation.grid.size() * sizeof(float),cudaMemcpyHostToDevice);
             
             this->curr_t += time_step;
         };
@@ -169,8 +187,7 @@ namespace CodeCuda
         {
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
-            code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(
-                1024 * 1024, grid_v_d, grid_div_d, grid_pressures_d, (float *)this->mappedPtr);
+            code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(1024 * 1024, simulation.w, simulation.h, (float*)grid_v_d, (float*)grid_div_d, (float*)grid_pressures_d, (float *)this->mappedPtr);
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -195,12 +212,25 @@ namespace CodeCuda
         CODE_API::CW_StreamSynchronize(this->stream);
         CODE_API::CW_StreamDestroy(this->stream);
 
+        CODE_API::CW_Free(grid_pressures_d);
+        CODE_API::CW_Free(grid_div_d);
+        CODE_API::CW_Free(grid_v_d);
         this->stream = nullptr;
         this->device = -1;
         this->initialized = false;
         return C_Res::OK;
     }
-    C_Res C_Matmul(CodeCudaContext *code_cuda_context, const int M, const int N, const int K, const float *a,
+    
+    C_Res C_UpdateSim()
+    {
+        if (!simulation.ready_to_run)
+        {
+            simulation.InitGrid(50, 50);
+        }
+        simulation.UpdateSimulation();
+        return C_Res::OK;
+    }
+        C_Res C_Matmul(CodeCudaContext *code_cuda_context, const int M, const int N, const int K, const float *a,
                    const float *b, float *c)
     {
         if (c == nullptr)

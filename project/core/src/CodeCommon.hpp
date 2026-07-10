@@ -44,10 +44,7 @@ namespace CODE_API
     inline void CW_Free(void *ptr) { CUDA_CHECK(cudaFree(ptr)); }
     inline void CW_DeviceSynchronize() { CUDA_CHECK(cudaDeviceSynchronize()); }
     inline void CW_GetLastError() { CUDA_CHECK(cudaGetLastError()); }
-    inline void CW_PeekAtLastError()
-    {
-        CUDA_CHECK(cudaPeekAtLastError());
-    }
+    inline void CW_PeekAtLastError() { CUDA_CHECK(cudaPeekAtLastError()); }
     inline void CW_FreeZero() { CUDA_CHECK(cudaFree(nullptr)); }
     inline void CW_ImportExternalMemory(cudaExternalMemory_t *extMem_out,
                                         const cudaExternalMemoryHandleDesc *memHandleDesc)
@@ -107,13 +104,9 @@ namespace CODE_API
         CUDA_CHECK(cudaMemcpyAsync(dst, src, count, kind, stream));
     }
     inline void CW_DeviceReset() { CUDA_CHECK(cudaDeviceReset()); }
-    inline void CW_DestroyExternalMemory(cudaExternalMemory_t extMem)
-    {
-        CUDA_CHECK(cudaDestroyExternalMemory(extMem));
-    }
-    inline void CW_ImportExternalSemaphore(
-        cudaExternalSemaphore_t* extSem_out,
-        const cudaExternalSemaphoreHandleDesc* semHandleDesc)
+    inline void CW_DestroyExternalMemory(cudaExternalMemory_t extMem) { CUDA_CHECK(cudaDestroyExternalMemory(extMem)); }
+    inline void CW_ImportExternalSemaphore(cudaExternalSemaphore_t *extSem_out,
+                                           const cudaExternalSemaphoreHandleDesc *semHandleDesc)
     {
         CUDA_CHECK(cudaImportExternalSemaphore(extSem_out, semHandleDesc));
     }
@@ -123,37 +116,25 @@ namespace CODE_API
         CUDA_CHECK(cudaDestroyExternalSemaphore(extSem));
     }
 
-    inline void CW_WaitExternalSemaphoresAsync(
-        const cudaExternalSemaphore_t* extSemArray,
-        const cudaExternalSemaphoreWaitParams* paramsArray,
-        unsigned int numExtSems,
-        cudaStream_t stream)
+    inline void CW_WaitExternalSemaphoresAsync(const cudaExternalSemaphore_t *extSemArray,
+                                               const cudaExternalSemaphoreWaitParams *paramsArray,
+                                               unsigned int numExtSems, cudaStream_t stream)
     {
-        CUDA_CHECK(cudaWaitExternalSemaphoresAsync(
-            extSemArray,
-            paramsArray,
-            numExtSems,
-            stream));
+        CUDA_CHECK(cudaWaitExternalSemaphoresAsync(extSemArray, paramsArray, numExtSems, stream));
     }
 
-    inline void CW_SignalExternalSemaphoresAsync(
-        const cudaExternalSemaphore_t* extSemArray,
-        const cudaExternalSemaphoreSignalParams* paramsArray,
-        unsigned int numExtSems,
-        cudaStream_t stream)
+    inline void CW_SignalExternalSemaphoresAsync(const cudaExternalSemaphore_t *extSemArray,
+                                                 const cudaExternalSemaphoreSignalParams *paramsArray,
+                                                 unsigned int numExtSems, cudaStream_t stream)
     {
-        CUDA_CHECK(cudaSignalExternalSemaphoresAsync(
-            extSemArray,
-            paramsArray,
-            numExtSems,
-            stream));
+        CUDA_CHECK(cudaSignalExternalSemaphoresAsync(extSemArray, paramsArray, numExtSems, stream));
     }
-    inline void CW_StreamCreateWithFlags(cudaStream_t* stream, unsigned int flags)
+    inline void CW_StreamCreateWithFlags(cudaStream_t *stream, unsigned int flags)
     {
         CUDA_CHECK(cudaStreamCreateWithFlags(stream, flags));
     }
 
-    inline void CW_StreamCreateWithPriority(cudaStream_t* stream, unsigned int flags, int priority)
+    inline void CW_StreamCreateWithPriority(cudaStream_t *stream, unsigned int flags, int priority)
     {
         CUDA_CHECK(cudaStreamCreateWithPriority(stream, flags, priority));
     }
@@ -163,58 +144,37 @@ namespace CODE_API
         CUDA_CHECK(cudaStreamWaitEvent(stream, event, flags));
     }
 
-    inline void CW_StreamQuery(cudaStream_t stream)
-    {
-        CUDA_CHECK(cudaStreamQuery(stream));
-    }
-    inline void CW_EventCreateWithFlags(cudaEvent_t* event, unsigned int flags)
+    inline void CW_StreamQuery(cudaStream_t stream) { CUDA_CHECK(cudaStreamQuery(stream)); }
+    inline void CW_EventCreateWithFlags(cudaEvent_t *event, unsigned int flags)
     {
         CUDA_CHECK(cudaEventCreateWithFlags(event, flags));
     }
 
-    inline void CW_EventQuery(cudaEvent_t event)
-    {
-        CUDA_CHECK(cudaEventQuery(event));
-    }
-    inline void CW_MemsetAsync(void* dst, int value, size_t count, cudaStream_t stream)
+    inline void CW_EventQuery(cudaEvent_t event) { CUDA_CHECK(cudaEventQuery(event)); }
+    inline void CW_MemsetAsync(void *dst, int value, size_t count, cudaStream_t stream)
     {
         CUDA_CHECK(cudaMemsetAsync(dst, value, count, stream));
     }
-    inline void CW_Memcpy2DAsync(
-    void* dst,
-    size_t dpitch,
-    const void* src,
-    size_t spitch,
-    size_t width,
-    size_t height,
-    cudaMemcpyKind kind,
-    cudaStream_t stream)
+    inline void CW_Memcpy2DAsync(void *dst, size_t dpitch, const void *src, size_t spitch, size_t width, size_t height,
+                                 cudaMemcpyKind kind, cudaStream_t stream)
     {
         CUDA_CHECK(cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height, kind, stream));
     }
     template <class T>
-    inline void CW_MallocPitch(T** ptr, size_t* pitch, size_t widthBytes, size_t height)
+    inline void CW_MallocPitch(T **ptr, size_t *pitch, size_t widthBytes, size_t height)
     {
-        CUDA_CHECK(cudaMallocPitch((void**)ptr, pitch, widthBytes, height));
+        CUDA_CHECK(cudaMallocPitch((void **)ptr, pitch, widthBytes, height));
     }
-    inline void CW_MemPrefetchAsync(
-    const void* devPtr,
-    size_t count,
-    int dstDevice,
-    cudaStream_t stream = nullptr)
+    inline void CW_MemPrefetchAsync(const void *devPtr, size_t count, int dstDevice, cudaStream_t stream = nullptr)
     {
         CUDA_CHECK(cudaMemPrefetchAsync(devPtr, count, dstDevice, stream));
     }
-    inline void CW_DeviceGetAttribute(int* value, cudaDeviceAttr attr, int device)
+    inline void CW_DeviceGetAttribute(int *value, cudaDeviceAttr attr, int device)
     {
         CUDA_CHECK(cudaDeviceGetAttribute(value, attr, device));
     }
-    inline void CW_CheckKernelLaunch()
-    {
-        CUDA_CHECK(cudaPeekAtLastError());
-    }
+    inline void CW_CheckKernelLaunch() { CUDA_CHECK(cudaPeekAtLastError()); }
 } // namespace CODE_API
-
 
 
 struct k_auto_tunning_params
@@ -346,7 +306,7 @@ namespace CodeBenchmarking
 
         output << "[\n" << result_json << "\n]\n";
     }
-    
+
 
 } // namespace CodeBenchmarking
 namespace CodeSimulation
@@ -355,7 +315,7 @@ namespace CodeSimulation
     {
         float vec = 0.0f;
         bool is_wall = false;
-        int GetState() { return is_wall ? 0 : 1; }
+        float GetState() { return is_wall ? 0.0f : 1.0f; }
     };
     struct c_cell
     {
@@ -364,6 +324,7 @@ namespace CodeSimulation
         int s = 0;
         float density = 1.0f;
         float pressure = 0.0f;
+        float cell_velocity = 0.0f;
     };
     struct c_grid
     {
@@ -407,7 +368,7 @@ namespace CodeSimulation
                     valid_cell_count++;
                 }
             }
-            for (int i = 0; i <grid.size(); ++i)
+            for (int i = 0; i < grid.size(); ++i)
             {
                 c_edge *edge_u_left_out = nullptr;
                 c_edge *edge_u_right_out = nullptr;
@@ -416,8 +377,10 @@ namespace CodeSimulation
                 int x = i % w;
                 int y = i / w;
                 GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
-                grid[i].s = edge_u_left_out->GetState() + edge_u_right_out->GetState() + edge_v_top_out->GetState() + edge_v_bottom_out->GetState(); 
+                grid[i].s = edge_u_left_out->GetState() + edge_u_right_out->GetState() + edge_v_top_out->GetState() +
+                    edge_v_bottom_out->GetState();
             }
+            ready_to_run = true;
         }
         void RunSimulation(int steps)
         {
@@ -436,7 +399,7 @@ namespace CodeSimulation
             {
                 solved_grid_v[i].reserve(v_edges.size());
             }
-            
+
             for (int i = 0; i < steps; ++i)
             {
                 UpdateSimulation();
@@ -444,24 +407,42 @@ namespace CodeSimulation
                 memcpy(solved_grid_u[i].data(), u_edges.data(), u_edges.size() * sizeof(c_edge));
                 memcpy(solved_grid_v[i].data(), v_edges.data(), v_edges.size() * sizeof(c_edge));
             }
-            
         }
         void UpdateSimulation()
         {
             UpdateVelocity();
             UpdateDiv();
+            MoveVelocityField();
+            UpdateData();
+            
         }
-        
+
     private:
+        
+        void MoveVelocityField()
+        {
+            
+        }
+        void UpdateData()
+        {
+            sim_step_idx++;
+            total_t += dt;
+        }
         void UpdateVelocity()
         {
+            float gravity = (g * 1) * sin(total_t * 5.0f) * 0.25f;
+            if (gravity_sign == 1)
+            {
+                gravity = g * -1;
+            }
+            
             for (int i = 0; i < v_edges.size(); ++i)
             {
                 if (v_edges[i].is_wall)
                 {
                     continue;
                 }
-                v_edges[i].vec += (t * g);
+                    v_edges[i].vec += (dt * (gravity));
             }
         }
         void UpdateDiv()
@@ -478,7 +459,43 @@ namespace CodeSimulation
             }
             while (converged < valid_cell_count)
             {
-                    for (int i = 0; i < grid.size(); ++i)
+                for (int i = 0; i < grid.size(); ++i)
+                {
+                    if (grid[i].is_wall)
+                    {
+                        continue;
+                    }
+                    int s = grid[i].s;
+                    if (s == 0)
+                    {
+                        CODECUDA_PRINTLN("State must be at least one");
+                        continue;
+                    }
+                    c_edge *edge_u_left_out = nullptr;
+                    c_edge *edge_u_right_out = nullptr;
+                    c_edge *edge_v_top_out = nullptr;
+                    c_edge *edge_v_bottom_out = nullptr;
+                    int x = i % w;
+                    int y = i / w;
+                    GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
+                    grid[i].div = Overrelaxation(edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec -
+                                                 edge_v_bottom_out->vec);
+
+                    float correction = grid[i].div / float(s);
+
+                    edge_u_left_out->vec += correction * edge_u_left_out->GetState();
+                    edge_u_right_out->vec -= correction * edge_u_right_out->GetState();
+                    edge_v_bottom_out->vec += correction * edge_v_bottom_out->GetState();
+                    edge_v_top_out->vec -= correction * edge_v_top_out->GetState();
+                    grid[i].pressure += correction * (grid[i].density * dx / dt);
+
+                    grid[i].cell_velocity =
+                        (edge_u_left_out->vec + edge_u_right_out->vec + edge_v_bottom_out->vec + edge_v_top_out->vec) /
+                        4.0f;
+                }
+
+                converged = 0;
+                for (int i = 0; i < grid.size(); ++i)
                 {
                     if (grid[i].is_wall)
                     {
@@ -492,27 +509,7 @@ namespace CodeSimulation
                     int y = i / w;
                     GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
                     grid[i].div =
-                        Overrelaxation(edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec - edge_v_bottom_out->vec);
-                    int s = grid[i].s;
-                    grid[i].pressure += (grid[i].div/s) * (grid[i].density * dx / t);
-                    if (s == 0)
-                    {
-                        CODECUDA_PRINTLN("State must be at least one");
-                        continue;
-                    }
-                    edge_u_left_out->vec += grid[i].div *  edge_u_left_out->GetState() / s;
-                    edge_u_right_out->vec -= grid[i].div *  edge_u_right_out->GetState() / s;
-                    edge_v_bottom_out->vec += grid[i].div *  edge_v_bottom_out->GetState() / s;
-                    edge_v_top_out->vec -= grid[i].div *  edge_v_top_out->GetState() / s;
-                }
-                
-                converged = 0;
-                for (int i = 0; i < grid.size(); ++i)
-                {
-                    if (grid[i].is_wall)
-                    {
-                        continue;
-                    }
+                        edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec - edge_v_bottom_out->vec;
                     if (std::abs(grid[i].div) < epsilon)
                     {
                         converged++;
@@ -524,7 +521,7 @@ namespace CodeSimulation
         }
 
 
-        void GetCellEdges(int x, int y, c_edge *& edge_u_left_out, c_edge *& edge_u_right_out, c_edge *&edge_v_top_out,
+        void GetCellEdges(int x, int y, c_edge *&edge_u_left_out, c_edge *&edge_u_right_out, c_edge *&edge_v_top_out,
                           c_edge *&edge_v_bottom_out)
         {
 
@@ -534,16 +531,15 @@ namespace CodeSimulation
             edge_v_top_out = &v_edges[y * edge_w + x];
             edge_v_bottom_out = &v_edges[(y + 1) * edge_w + x];
         }
-        float Overrelaxation(float div)
-        {
-            return div * 1.9f;
-        }
+        float Overrelaxation(float div) { return div * 1.9f; }
         void PrintDivergenceConvergence(int iteration)
         {
             int total = 0;
             int converged = 0;
             float maxAbsDiv = 0.0f;
             float sumAbsDiv = 0.0f;
+            float sumAbsPres = 0.0f;
+            float maxPres = 0.0f;
 
             for (int i = 0; i < grid.size(); ++i)
             {
@@ -554,44 +550,50 @@ namespace CodeSimulation
                 int y = i / w;
 
                 float div = grid[i].div;
+                float pres = grid[i].pressure;
                 float absDiv = std::abs(div);
+                float absPres = std::abs(pres);
 
                 total++;
                 sumAbsDiv += absDiv;
+                sumAbsPres += absPres;
                 maxAbsDiv = max(maxAbsDiv, absDiv);
+                maxPres = max(maxPres, absPres);
 
                 if (absDiv < epsilon)
                     converged++;
             }
 
             float avgAbsDiv = total > 0 ? sumAbsDiv / float(valid_cell_count) : 0.0f;
+            float avgAbsPres = total > 0 ? sumAbsPres / float(valid_cell_count) : 0.0f;
 
-            std::cout
-                << "iter " << iteration
-                << " | converged " << converged << "/" << total
-                << " | avgDiv " << avgAbsDiv
-                << " | maxDiv " << maxAbsDiv
-                << "\n";
+            std::cout << "iter " << iteration << " | converged " << converged << "/" << total << " | avgPres "
+                      << avgAbsPres << " | avgDiv " << avgAbsDiv << " | maxDiv " << maxAbsDiv << "| maxPres " << maxPres << "\n";
         }
         const float epsilon = 0.0001f;
-        float t = 1.0f / 30.0f;
+        float dt = 1.0f / 60.0f;
         float g = -9.81f;
-        int w = -1;
-        int h = -1;
         int valid_cell_count = 0;
-        int edge_w = -1;
-        int edge_h = -1;
         float dx = 0.0f;
         float dy = 0.0f;
+
     public:
+        bool ready_to_run = false;
+        int w = -1;
+        int h = -1;
+        int edge_w = -1;
+        int edge_h = -1;
         std::vector<c_cell> grid;
         std::vector<c_edge> u_edges;
         std::vector<c_edge> v_edges;
         std::vector<std::vector<c_cell>> solved_grid_states;
         std::vector<std::vector<c_cell>> solved_grid_u;
         std::vector<std::vector<c_cell>> solved_grid_v;
+        int gravity_sign = 0;
+        int64_t sim_step_idx = 0;
+        float total_t = 0.0f;
     };
-    
 
-}
+
+} // namespace CodeSimulation
 #endif // CODECOMMON_HPP
