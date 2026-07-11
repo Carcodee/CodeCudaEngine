@@ -5,6 +5,8 @@
 #ifndef CODECOMMON_HPP
 #define CODECOMMON_HPP
 
+
+#include <algorithm>
 #include "assert.h"
 #include "common/Logger.hpp"
 
@@ -377,10 +379,41 @@ namespace CodeSimulation
                 int x = i % w;
                 int y = i / w;
                 GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
-                grid[i].s = edge_u_left_out->GetState() + edge_u_right_out->GetState() + edge_v_top_out->GetState() +
-                    edge_v_bottom_out->GetState();
+                grid[i].s = edge_u_left_out->GetState() + edge_u_right_out->GetState() + edge_v_top_out->GetState() + edge_v_bottom_out->GetState();
             }
             ready_to_run = true;
+        }
+        void AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
+        {
+            if (x_pos < 0 || x_pos >= edge_w || y_pos < 0 || y_pos >= edge_h)
+            {
+                CODECUDA_PRINTLN("Invalid x,y pos");
+                return;
+            }
+            for (int y = -radius; y < radius; ++y)
+            {
+                for (int x = -radius; x < radius; ++x)
+                {
+                    int x_final = x + x_pos;
+                    int y_final = y + y_pos;
+                    if (x_final < 0 || x_final >= edge_w || y_final < 0 || y_final >= edge_h)
+                    {
+                        continue;
+                    }
+                    int sq_dist = pow(x_final - x_pos, 2.0f) + pow(y_final - y_pos, 2.0f);
+                    if (sq_dist >= radius * radius)
+                    {
+                        continue;
+                    }
+                    int idx = y_final * edge_w + x_final;
+                    if (u_edges[idx].is_wall)
+                    {
+                        continue;
+                    }
+                    u_edges[idx].vec += vel_x;
+                    v_edges[idx].vec += vel_y;
+                }
+            }
         }
         void RunSimulation(int steps)
         {
@@ -412,17 +445,12 @@ namespace CodeSimulation
         {
             UpdateVelocity();
             UpdateDiv();
-            MoveVelocityField();
+            AdvectVelocity();
             UpdateData();
-            
         }
 
     private:
-        
-        void MoveVelocityField()
-        {
-            
-        }
+        void AdvectVelocity() {}
         void UpdateData()
         {
             sim_step_idx++;
@@ -430,19 +458,19 @@ namespace CodeSimulation
         }
         void UpdateVelocity()
         {
-            float gravity = (g * 1) * sin(total_t * 5.0f) * 0.25f;
+            float gravity = (g * 1) * sin(total_t * 15.0f) * 0.15f;
             if (gravity_sign == 1)
             {
                 gravity = g * -1;
             }
-            
+
             for (int i = 0; i < v_edges.size(); ++i)
             {
                 if (v_edges[i].is_wall)
                 {
                     continue;
                 }
-                    v_edges[i].vec += (dt * (gravity));
+                v_edges[i].vec += (dt * (gravity));
             }
         }
         void UpdateDiv()
@@ -457,7 +485,7 @@ namespace CodeSimulation
                 }
                 grid[i].pressure = 0.0f;
             }
-            while (converged < valid_cell_count)
+            for (int iter = 0; iter < 1; ++iter)
             {
                 for (int i = 0; i < grid.size(); ++i)
                 {
@@ -568,7 +596,8 @@ namespace CodeSimulation
             float avgAbsPres = total > 0 ? sumAbsPres / float(valid_cell_count) : 0.0f;
 
             std::cout << "iter " << iteration << " | converged " << converged << "/" << total << " | avgPres "
-                      << avgAbsPres << " | avgDiv " << avgAbsDiv << " | maxDiv " << maxAbsDiv << "| maxPres " << maxPres << "\n";
+                      << avgAbsPres << " | avgDiv " << avgAbsDiv << " | maxDiv " << maxAbsDiv << "| maxPres " << maxPres
+                      << "\n";
         }
         const float epsilon = 0.0001f;
         float dt = 1.0f / 60.0f;
@@ -589,7 +618,7 @@ namespace CodeSimulation
         std::vector<std::vector<c_cell>> solved_grid_states;
         std::vector<std::vector<c_cell>> solved_grid_u;
         std::vector<std::vector<c_cell>> solved_grid_v;
-        int gravity_sign = 0;
+        int gravity_sign = 1;
         int64_t sim_step_idx = 0;
         float total_t = 0.0f;
     };

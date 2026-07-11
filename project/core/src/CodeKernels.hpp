@@ -662,18 +662,36 @@ namespace code_kernels
                 return;
             int x = idx % 1024;
             int y = idx / 1024;
-            float idxNorm = float(idx)/ float(size);
             
-            auto uv = float2(float(x)/1024.0f, float(y)/1024.0f);
+            auto uv = float2(float(x)/1023.0f, float(y)/1023.0f);
             
-            auto pos = int2(uv.x * float(sim_w), uv.y * float(sim_h));
-            int sim_idx = sim_w * pos.y + pos.x;
-            float min = 0.0000001f;
-            float max = 0.00001f;
+            auto pos_float = float2(uv.x * float(sim_w - 1), uv.y * float(sim_h - 1));
             
-            float pres_norm = grid_pressures[sim_idx] - min / (max - min);
+            //0 - 1 down dir in y and 0 - 1 right in x
+            auto wx = pos_float.x - floor(pos_float.x);
+            auto wy = pos_float.y - floor(pos_float.y);
             
-            data[idx] = pres_norm;
+            auto tl = int2(pos_float.x, pos_float.y);
+            auto tr = int2(ceil(pos_float.x), pos_float.y);
+            auto bl = int2(pos_float.x, ceil(pos_float.y));
+            auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
+            
+            float val_tl = grid_div[tl.y * sim_w + tl.x];
+            float val_tr = grid_div[tr.y * sim_w + tr.x];
+            float val_bl = grid_div[bl.y * sim_w + bl.x];
+            float val_br = grid_div[br.y * sim_w + br.x];
+            
+            float top = (val_tl * (1.0f - wx)) + (val_tr * wx);
+            float bot = (val_bl * (1.0f - wx)) + (val_br * wx);
+            
+            float final = (top * (1.0f - wy)) + (bot * wy);
+            
+            int sim_idx = sim_w * tl.y + tl.x;
+            float min_val = 0.00000001f;
+            float max_val = 0.0000001f;
+            float pres_norm = (final - min_val) / (max_val - min_val);
+            
+            data[idx] = final;
         }
         
     }
