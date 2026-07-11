@@ -379,9 +379,57 @@ namespace CodeSimulation
                 int x = i % w;
                 int y = i / w;
                 GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
-                grid[i].s = edge_u_left_out->GetState() + edge_u_right_out->GetState() + edge_v_top_out->GetState() + edge_v_bottom_out->GetState();
+                grid[i].s = edge_u_left_out->GetState() + edge_u_right_out->GetState() + edge_v_top_out->GetState() +
+                    edge_v_bottom_out->GetState();
             }
             ready_to_run = true;
+        }
+        void AddRadialVelocity(int x_pos, int y_pos, int radius, float scale)
+        {
+            if (x_pos < 0 || x_pos >= edge_w || y_pos < 0 || y_pos >= edge_h || radius <= 0)
+            {
+                CODECUDA_PRINTLN("Invalid radial velocity parameters");
+                return;
+            }
+
+            const int radius_sq = radius * radius;
+
+            for (int y = -radius; y <= radius; ++y)
+            {
+                for (int x = -radius; x <= radius; ++x)
+                {
+                    const int x_final = x_pos + x;
+                    const int y_final = y_pos + y;
+
+                    if (x_final < 0 || x_final >= edge_w || y_final < 0 || y_final >= edge_h)
+                    {
+                        continue;
+                    }
+
+                    // x and y are already offsets from the center.
+                    const int sq_dist = x * x + y * y;
+
+                    if (sq_dist == 0 || sq_dist > radius_sq)
+                    {
+                        continue;
+                    }
+
+                    const int idx = y_final * edge_w + x_final;
+
+                    if (u_edges[idx].is_wall)
+                    {
+                        continue;
+                    }
+
+                    const float inverse_length = 1.0f / std::sqrt(static_cast<float>(sq_dist));
+
+                    const float u = static_cast<float>(x) * inverse_length * scale;
+                    const float v = static_cast<float>(y) * inverse_length * scale;
+
+                    u_edges[idx].vec += u;
+                    v_edges[idx].vec += v;
+                }
+            }
         }
         void AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
         {
@@ -485,7 +533,7 @@ namespace CodeSimulation
                 }
                 grid[i].pressure = 0.0f;
             }
-            for (int iter = 0; iter < 1; ++iter)
+            for (int iter = 0; iter < 5; ++iter)
             {
                 for (int i = 0; i < grid.size(); ++i)
                 {

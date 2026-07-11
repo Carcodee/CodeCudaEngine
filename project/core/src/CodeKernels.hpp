@@ -676,10 +676,10 @@ namespace code_kernels
             auto bl = int2(pos_float.x, ceil(pos_float.y));
             auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
             
-            float val_tl = grid_div[tl.y * sim_w + tl.x];
-            float val_tr = grid_div[tr.y * sim_w + tr.x];
-            float val_bl = grid_div[bl.y * sim_w + bl.x];
-            float val_br = grid_div[br.y * sim_w + br.x];
+            float val_tl = grid_pressures[tl.y * sim_w + tl.x];
+            float val_tr = grid_pressures[tr.y * sim_w + tr.x];
+            float val_bl = grid_pressures[bl.y * sim_w + bl.x];
+            float val_br = grid_pressures[br.y * sim_w + br.x];
             
             float top = (val_tl * (1.0f - wx)) + (val_tr * wx);
             float bot = (val_bl * (1.0f - wx)) + (val_br * wx);

@@ -14,6 +14,8 @@ namespace CodeCuda
     static void *grid_pressures_d;
     static void *grid_div_d;
     static void *grid_v_d;
+    static void *u_d;
+    static void *v_d;
     void add_kernel_launcher(const std::string &name, std::function<void(cudaStream_t)> kernelFunc,
                              std::map<std::string, kernel_launcher> &kernels_out)
     {
@@ -221,12 +223,19 @@ namespace CodeCuda
         return C_Res::OK;
     }
     
-    C_Res C_UpdateSim()
+    C_Res C_AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
     {
-        if (!simulation.ready_to_run)
-        {
-            simulation.InitGrid(100, 100);
-        }
+        simulation.AddVelocity(x_pos, y_pos, radius, vel_x, vel_y);
+        return C_Res::OK;
+    }
+    
+    C_Res C_AddRadialVelocity(int x_pos, int y_pos, int radius, float scale)
+    {
+        simulation.AddRadialVelocity(x_pos, y_pos, radius, scale);
+        return C_Res::OK;
+    }
+    C_Res C_AddVelocity()
+    {
         int x = rand() % simulation.w;
         int y = rand() % simulation.h;
         
@@ -239,6 +248,14 @@ namespace CodeCuda
         if (simulation.sim_step_idx % 2 == 0)
         {
             simulation.AddVelocity(x, y, r, vel_x, vel_y);
+        }
+        return C_Res::OK;
+    }
+    C_Res C_UpdateSim()
+    {
+        if (!simulation.ready_to_run)
+        {
+            simulation.InitGrid(100, 100);
         }
         simulation.UpdateSimulation();
         return C_Res::OK;
