@@ -136,7 +136,7 @@ namespace CodeCuda
                          " \nWith compute capability: ", device_prop.major, device_prop.minor);
         return C_Res::OK;
     }
-    
+
 
     C_Res CodeCudaContext::C_ImportExternalBuffer(HANDLE win_handle, size_t buffer_size)
     {
@@ -164,32 +164,50 @@ namespace CodeCuda
                 CODE_API::CW_Malloc(&grid_pressures_d, simulation.grid.size() * sizeof(float));
                 CODE_API::CW_Malloc(&grid_div_d, simulation.grid.size() * sizeof(float));
                 CODE_API::CW_Malloc(&grid_v_d, simulation.grid.size() * sizeof(float));
+                CODE_API::CW_Malloc(&u_d, simulation.u_edges.size() * sizeof(float));
+                CODE_API::CW_Malloc(&v_d, simulation.v_edges.size() * sizeof(float));
             }
             std::vector<float> divs;
             std::vector<float> v;
             std::vector<float> pressures;
+            std::vector<float> u_edges;
+            std::vector<float> v_edges;
             divs.resize(simulation.grid.size());
             v.resize(simulation.grid.size());
             pressures.resize(simulation.grid.size());
+            u_edges.resize(simulation.u_edges.size());
+            v_edges.resize(simulation.v_edges.size());
             for (int i = 0; i < simulation.grid.size(); ++i)
             {
                 divs[i] = simulation.grid[i].div;
                 v[i] = simulation.grid[i].cell_velocity;
                 pressures[i] = simulation.grid[i].pressure;
             }
-            
-            
-            CODE_API::CW_Memcpy(grid_div_d, divs.data(),simulation.grid.size() * sizeof(float),cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(grid_pressures_d, v.data(),simulation.grid.size() * sizeof(float),cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(grid_v_d, pressures.data(),simulation.grid.size() * sizeof(float),cudaMemcpyHostToDevice);
-            
+            for (int i = 0; i < simulation.u_edges.size(); ++i)
+            {
+                u_edges[i] = simulation.u_edges[i].vec;
+                v_edges[i] = simulation.v_edges[i].vec;
+            }
+
+
+            CODE_API::CW_Memcpy(grid_div_d, divs.data(), simulation.grid.size() * sizeof(float),
+                                cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(grid_pressures_d, v.data(), simulation.grid.size() * sizeof(float),
+                                cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(grid_v_d, pressures.data(), simulation.grid.size() * sizeof(float),
+                                cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(u_d, u_edges.data(), simulation.u_edges.size() * sizeof(float), cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(v_d, v_edges.data(), simulation.v_edges.size() * sizeof(float), cudaMemcpyHostToDevice);
+
             this->curr_t += time_step;
         };
         this->kernel_launcher.kernel = [this](cudaStream_t stream)
         {
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
-            code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(1024 * 1024, simulation.w, simulation.h, (float*)grid_v_d, (float*)grid_div_d, (float*)grid_pressures_d, (float *)this->mappedPtr);
+            code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(
+                1024 * 1024, simulation.w, simulation.h, (float *)u_d, (float *)v_d, (float *)grid_v_d,
+                (float *)grid_div_d, (float *)grid_pressures_d, (float *)this->mappedPtr);
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -222,13 +240,13 @@ namespace CodeCuda
         this->initialized = false;
         return C_Res::OK;
     }
-    
+
     C_Res C_AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
     {
         simulation.AddVelocity(x_pos, y_pos, radius, vel_x, vel_y);
         return C_Res::OK;
     }
-    
+
     C_Res C_AddRadialVelocity(int x_pos, int y_pos, int radius, float scale)
     {
         simulation.AddRadialVelocity(x_pos, y_pos, radius, scale);
@@ -238,13 +256,13 @@ namespace CodeCuda
     {
         int x = rand() % simulation.w;
         int y = rand() % simulation.h;
-        
+
         int r = rand() % 50;
         int scale = rand() % 10;
-        
+
         float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
-        float vel_y= (float(rand() % 100) / 100.0f) * float(scale);
-        
+        float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
+
         if (simulation.sim_step_idx % 2 == 0)
         {
             simulation.AddVelocity(x, y, r, vel_x, vel_y);
@@ -260,7 +278,7 @@ namespace CodeCuda
         simulation.UpdateSimulation();
         return C_Res::OK;
     }
-        C_Res C_Matmul(CodeCudaContext *code_cuda_context, const int M, const int N, const int K, const float *a,
+    C_Res C_Matmul(CodeCudaContext *code_cuda_context, const int M, const int N, const int K, const float *a,
                    const float *b, float *c)
     {
         if (c == nullptr)

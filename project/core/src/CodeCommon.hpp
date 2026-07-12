@@ -338,6 +338,7 @@ namespace CodeSimulation
             this->w = width;
             this->h = height;
             this->dx = 1.0f / float(w);
+            this->dy = 1.0f / float(h);
             grid.reserve(width * height);
             u_edges.reserve(edge_w * edge_h);
             v_edges.reserve(edge_w * edge_h);
@@ -493,23 +494,22 @@ namespace CodeSimulation
         {
             UpdateVelocity();
             UpdateDiv();
-            AdvectVelocity();
+            // AdvectVelocity();
             UpdateData();
         }
 
     private:
-        void AdvectVelocity() {}
-        void UpdateData()
+        void AdvectVelocity()
         {
-            sim_step_idx++;
-            total_t += dt;
-        }
-        void UpdateVelocity()
-        {
-            float gravity = (g * 1) * sin(total_t * 15.0f) * 0.15f;
-            if (gravity_sign == 1)
+            for (int i = 0; i < u_edges.size(); ++i)
             {
-                gravity = g * -1;
+
+                if (u_edges[i].is_wall)
+                {
+                    continue;
+                }
+                float grad = u_edges[i].vec - u_edges[i - 1].vec;
+                u_edges[i].vec = u_edges[i].vec - ((u_edges[i].vec * dt) * grad) / dx;
             }
 
             for (int i = 0; i < v_edges.size(); ++i)
@@ -518,8 +518,31 @@ namespace CodeSimulation
                 {
                     continue;
                 }
-                v_edges[i].vec += (dt * (gravity));
+                float grad = v_edges[i].vec - v_edges[i - 1].vec;
+                v_edges[i].vec = v_edges[i].vec - ((v_edges[i].vec * dt) * grad) / dy;
             }
+        }
+        void UpdateData()
+        {
+            sim_step_idx++;
+            total_t += dt;
+        }
+        void UpdateVelocity()
+        {
+            // float gravity = (g * 1);
+            // if (gravity_sign == 1)
+            // {
+            //     gravity = g * -1;
+            // }
+            //
+            // for (int i = 0; i < v_edges.size(); ++i)
+            // {
+            //     if (v_edges[i].is_wall)
+            //     {
+            //         continue;
+            //     }
+            //     v_edges[i].vec += (dt * (gravity));
+            // }
         }
         void UpdateDiv()
         {
@@ -544,7 +567,7 @@ namespace CodeSimulation
                     int s = grid[i].s;
                     if (s == 0)
                     {
-                        CODECUDA_PRINTLN("State must be at least one");
+                        CODECUDA_PRINTLN("solid");
                         continue;
                     }
                     c_edge *edge_u_left_out = nullptr;
@@ -610,46 +633,121 @@ namespace CodeSimulation
         float Overrelaxation(float div) { return div * 1.9f; }
         void PrintDivergenceConvergence(int iteration)
         {
-            int total = 0;
-            int converged = 0;
-            float maxAbsDiv = 0.0f;
+            int totalCells = 0;
+            int convergedCells = 0;
+
             float sumAbsDiv = 0.0f;
+            float maxAbsDiv = 0.0f;
+
             float sumAbsPres = 0.0f;
-            float maxPres = 0.0f;
+            float maxAbsPres = 0.0f;
+
+            float sumAbsU = 0.0f;
+            float maxAbsU = 0.0f;
+            float minU = std::numeric_limits<float>::max();
+            float maxU = std::numeric_limits<float>::lowest();
+            int validUCount = 0;
+
+            float sumAbsV = 0.0f;
+            float maxAbsV = 0.0f;
+            float minV = std::numeric_limits<float>::max();
+            float maxV = std::numeric_limits<float>::lowest();
+            int validVCount = 0;
 
             for (int i = 0; i < grid.size(); ++i)
             {
                 if (grid[i].is_wall)
+                {
                     continue;
+                }
 
-                int x = i % w;
-                int y = i / w;
+                const float absDiv = std::abs(grid[i].div);
+                const float absPres = std::abs(grid[i].pressure);
 
-                float div = grid[i].div;
-                float pres = grid[i].pressure;
-                float absDiv = std::abs(div);
-                float absPres = std::abs(pres);
+                totalCells++;
 
-                total++;
                 sumAbsDiv += absDiv;
+                maxAbsDiv = std::max(maxAbsDiv, absDiv);
+
                 sumAbsPres += absPres;
-                maxAbsDiv = max(maxAbsDiv, absDiv);
-                maxPres = max(maxPres, absPres);
+                maxAbsPres = std::max(maxAbsPres, absPres);
 
                 if (absDiv < epsilon)
-                    converged++;
+                {
+                    convergedCells++;
+                }
             }
 
-            float avgAbsDiv = total > 0 ? sumAbsDiv / float(valid_cell_count) : 0.0f;
-            float avgAbsPres = total > 0 ? sumAbsPres / float(valid_cell_count) : 0.0f;
+            for (const c_edge &edge : u_edges)
+            {
+                if (edge.is_wall)
+                {
+                    continue;
+                }
 
-            std::cout << "iter " << iteration << " | converged " << converged << "/" << total << " | avgPres "
-                      << avgAbsPres << " | avgDiv " << avgAbsDiv << " | maxDiv " << maxAbsDiv << "| maxPres " << maxPres
-                      << "\n";
+                const float u = edge.vec;
+                const float absU = std::abs(u);
+
+                sumAbsU += absU;
+                maxAbsU = std::max(maxAbsU, absU);
+                minU = std::min(minU, u);
+                maxU = std::max(maxU, u);
+                validUCount++;
+            }
+
+            for (const c_edge &edge : v_edges)
+            {
+                if (edge.is_wall)
+                {
+                    continue;
+                }
+
+                const float v = edge.vec;
+                const float absV = std::abs(v);
+
+                sumAbsV += absV;
+                maxAbsV = std::max(maxAbsV, absV);
+                minV = std::min(minV, v);
+                maxV = std::max(maxV, v);
+                validVCount++;
+            }
+
+            const float avgAbsDiv = totalCells > 0 ? sumAbsDiv / static_cast<float>(totalCells) : 0.0f;
+
+            const float avgAbsPres = totalCells > 0 ? sumAbsPres / static_cast<float>(totalCells) : 0.0f;
+
+            const float avgAbsU = validUCount > 0 ? sumAbsU / static_cast<float>(validUCount) : 0.0f;
+
+            const float avgAbsV = validVCount > 0 ? sumAbsV / static_cast<float>(validVCount) : 0.0f;
+
+            if (validUCount == 0)
+            {
+                minU = 0.0f;
+                maxU = 0.0f;
+            }
+
+            if (validVCount == 0)
+            {
+                minV = 0.0f;
+                maxV = 0.0f;
+            }
+            std::cout
+                << std::setprecision(2)
+                << "step=" << sim_step_idx
+                << " | time=" << total_t << "s"
+                << " | iter=" << iteration
+                << " | converged=" << convergedCells << "/" << totalCells
+                << " | div(avg/max)=" << avgAbsDiv << "/" << maxAbsDiv
+                << " | pressure(avg/max)=" << avgAbsPres << "/" << maxAbsPres
+                << " | u(avg/max/range)=" << avgAbsU << "/" << maxAbsU
+                << "/[" << minU << "," << maxU << "]"
+                << " | v(avg/max/range)=" << avgAbsV << "/" << maxAbsV
+                << "/[" << minV << "," << maxV << "]"
+                << '\n';
         }
         const float epsilon = 0.0001f;
         float dt = 1.0f / 60.0f;
-        float g = -9.81f;
+        float g = -0.1f;
         int valid_cell_count = 0;
         float dx = 0.0f;
         float dy = 0.0f;
