@@ -16,6 +16,8 @@ namespace CodeCuda
     static void *grid_v_d;
     static void *u_d;
     static void *v_d;
+    static int width = 100;
+    static int height = 100;
     void add_kernel_launcher(const std::string &name, std::function<void(cudaStream_t)> kernelFunc,
                              std::map<std::string, kernel_launcher> &kernels_out)
     {
@@ -58,7 +60,7 @@ namespace CodeCuda
 
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
-        simulation.InitGrid(50, 50);
+        simulation.InitGrid(width, height);
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("");
         CODECUDA_PRINTLN("");
@@ -257,11 +259,11 @@ namespace CodeCuda
         int x = rand() % simulation.w;
         int y = rand() % simulation.h;
 
-        int r = rand() % 50;
-        int scale = rand() % 10;
+        int r = rand() % 10;
+        int scale = rand() % 5;
 
-        float vel_x = (float(rand() % 50) / 50.0f) * float(scale);
-        float vel_y = (float(rand() % 50) / 50.0f) * float(scale);
+        float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
+        float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
 
         if (simulation.sim_step_idx % 2 == 0)
         {
@@ -273,7 +275,7 @@ namespace CodeCuda
     {
         if (!simulation.ready_to_run)
         {
-            simulation.InitGrid(50, 50);
+            simulation.InitGrid(width, height);
         }
         simulation.UpdateSimulation();
         return C_Res::OK;

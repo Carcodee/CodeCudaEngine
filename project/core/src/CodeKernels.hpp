@@ -724,7 +724,11 @@ namespace code_kernels
              float v_bot = (v_bl * (1.0f - wx)) + (v_br * wx);
              float v = (v_top * (1.0f - wy)) + (v_bot * wy);
             
-             data[idx] = v;
+            float speed = sqrtf(u * u + v * v);
+
+            float scale = 15.0f;
+            float normalized = log1pf(speed * scale) / log1pf(1000.0f * scale);
+             data[idx] = normalized;
         }
         
     }
