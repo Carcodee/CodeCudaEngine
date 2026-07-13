@@ -357,7 +357,7 @@ namespace CodeSimulation
                 int y = i / edge_w;
                 v_edges[i].is_wall = x == 0 || x == edge_w - 1 || y == 0 || y == edge_h - 1;
                 // int v = i % 2 == 0 ? -1 : 1;
-                v_edges[i].vec = float(rand() % 1000) / 1000.0f;
+                // v_edges[i].vec = float(rand() % 1000) / 1000.0f;
             }
 
             for (int i = 0; i < grid.capacity(); ++i)
@@ -494,32 +494,39 @@ namespace CodeSimulation
         {
             UpdateVelocity();
             UpdateDiv();
-            // AdvectVelocity();
+            AdvectVelocity();
             UpdateData();
         }
 
     private:
         void AdvectVelocity()
         {
+            std::vector<c_edge> u_edges_old = u_edges;
+            std::vector<c_edge> v_edges_old = v_edges;
             for (int i = 0; i < u_edges.size(); ++i)
             {
-
                 if (u_edges[i].is_wall)
                 {
                     continue;
                 }
-                float grad = u_edges[i].vec - u_edges[i - 1].vec;
-                u_edges[i].vec = u_edges[i].vec - ((u_edges[i].vec * dt) * grad) / dx;
+                int x = i % edge_w; 
+                int y = i / edge_w; 
+                float grad = (u_edges_old[i + 1].vec - u_edges_old[i - 1].vec) / (2 * dx);
+                float vel = u_edges_old[i].vec ;
+                u_edges[i].vec = u_edges_old[i].vec - vel * grad * dt;
             }
-
+            
             for (int i = 0; i < v_edges.size(); ++i)
             {
                 if (v_edges[i].is_wall)
                 {
                     continue;
                 }
-                float grad = v_edges[i].vec - v_edges[i - 1].vec;
-                v_edges[i].vec = v_edges[i].vec - ((v_edges[i].vec * dt) * grad) / dy;
+                int x = i % edge_w; 
+                int y = i / edge_w; 
+                float grad = (v_edges_old[(y + 1) * edge_w + x].vec - v_edges_old[(y - 1) * edge_w + x].vec) / (2 * dy);
+                float vel = v_edges_old[i].vec;
+                v_edges[i].vec = v_edges_old[i].vec - vel * grad * dt;
             }
         }
         void UpdateData()
@@ -630,7 +637,7 @@ namespace CodeSimulation
             edge_v_top_out = &v_edges[y * edge_w + x];
             edge_v_bottom_out = &v_edges[(y + 1) * edge_w + x];
         }
-        float Overrelaxation(float div) { return div * 1.9f; }
+        float Overrelaxation(float div) { return div * 1.0f; }
         void PrintDivergenceConvergence(int iteration)
         {
             int totalCells = 0;
@@ -746,7 +753,7 @@ namespace CodeSimulation
                 << '\n';
         }
         const float epsilon = 0.0001f;
-        float dt = 1.0f / 60.0f;
+        float dt = 1.0f / 30.0f;
         float g = -0.1f;
         int valid_cell_count = 0;
         float dx = 0.0f;

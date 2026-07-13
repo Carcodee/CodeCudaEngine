@@ -58,7 +58,7 @@ namespace CodeCuda
 
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
-        simulation.InitGrid(100, 100);
+        simulation.InitGrid(50, 50);
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("");
         CODECUDA_PRINTLN("");
@@ -260,8 +260,8 @@ namespace CodeCuda
         int r = rand() % 50;
         int scale = rand() % 10;
 
-        float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
-        float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
+        float vel_x = (float(rand() % 50) / 50.0f) * float(scale);
+        float vel_y = (float(rand() % 50) / 50.0f) * float(scale);
 
         if (simulation.sim_step_idx % 2 == 0)
         {
@@ -273,7 +273,7 @@ namespace CodeCuda
     {
         if (!simulation.ready_to_run)
         {
-            simulation.InitGrid(100, 100);
+            simulation.InitGrid(50, 50);
         }
         simulation.UpdateSimulation();
         return C_Res::OK;
