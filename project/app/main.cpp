@@ -73,6 +73,7 @@ int main()
     for (int i = 0; i < 100; ++i)
     {
         CodeCuda::C_UpdateSim();
+        CodeCuda::C_AddRandomVelocity();
     }
     while (true)
     {

@@ -655,7 +655,7 @@ namespace code_kernels
             data[idx] = sin(idxNorm * time);
         }
         
-        __global__ void k_simulation_read(int size, int sim_w, int sim_h, float* u_edges, float* v_edges,float* grid_v, float* grid_div, float* grid_pressures, float *data)
+        __global__ void k_simulation_read(int size, int sim_w, int sim_h, float min_speed, float max_speed, float avg_speed, float* u_edges, float* v_edges,float* grid_v, float* grid_div, float* grid_pressures, float *data)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
@@ -726,9 +726,9 @@ namespace code_kernels
             
             float speed = sqrtf(u * u + v * v);
 
-            float scale = 15.0f;
-            float normalized = log1pf(speed * scale) / log1pf(1000.0f * scale);
-             data[idx] = normalized;
+            float normalized = log(speed);
+            float norm_speed = (speed - min_speed) / (max_speed - min_speed);
+            data[idx] = norm_speed;
         }
         
     }
