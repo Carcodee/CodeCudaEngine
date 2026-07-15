@@ -726,7 +726,6 @@ namespace code_kernels
             
             float speed = sqrtf(u * u + v * v);
 
-            float normalized = log(speed);
             float norm_speed = (speed - min_speed) / (max_speed - min_speed);
             data[idx] = norm_speed;
         }

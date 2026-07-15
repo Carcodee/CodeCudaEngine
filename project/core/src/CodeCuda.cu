@@ -187,8 +187,8 @@ namespace CodeCuda
             }
             for (int i = 0; i < simulation.u_edges.size(); ++i)
             {
-                u_edges[i] = simulation.u_edges[i].acc;
-                v_edges[i] = simulation.v_edges[i].acc;
+                u_edges[i] = simulation.u_edges[i].vec;
+                v_edges[i] = simulation.v_edges[i].vec;
             }
 
 
@@ -243,14 +243,12 @@ namespace CodeCuda
         return C_Res::OK;
     }
     
-    C_Res C_AddRandomVelocity()
+    C_Res C_AddRandomVelocity(int scale)
     {
-        
         int x = rand() % simulation.w;
         int y = rand() % simulation.h;
 
-        int r = rand() % 10;
-        int scale = rand() % 5;
+        int r = rand() % 3;
 
         float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
         float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
