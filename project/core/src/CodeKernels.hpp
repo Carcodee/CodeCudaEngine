@@ -8,7 +8,7 @@
 
 namespace code_kernels
 {
-    namespace code_math 
+    namespace code_math
     {
 
         // A: M×K, B: K×N, C: M×N  (standard BLAS - K is the shared/inner dimension)
@@ -642,95 +642,98 @@ namespace code_kernels
         }
 
     } // namespace code_math
-    
+
     namespace code_tests
     {
-        
+
         __global__ void k_sine(int size, float time, float *data)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
-            float idxNorm = float(idx)/ float(size);
+            float idxNorm = float(idx) / float(size);
             data[idx] = sin(idxNorm * time);
         }
-        
-        __global__ void k_simulation_read(int size, int sim_w, int sim_h, float min_speed, float max_speed, float avg_speed, float* u_edges, float* v_edges,float* grid_v, float* grid_div, float* grid_pressures, float *data)
+
+        __global__ void k_simulation_read(int size, int sim_w, int sim_h, float min_speed, float max_speed,
+                                          float avg_speed, float *u_edges, float *v_edges,
+                                          float *grid_div, float *grid_pressures, float *data)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
             int x = idx % 1024;
             int y = idx / 1024;
-            
-            //bilinear for div and cell values
-            // auto uv = float2(float(x)/1023.0f, float(y)/1023.0f);
-            // auto pos_float = float2(uv.x * float(sim_w - 1), uv.y * float(sim_h - 1));
+
+            // bilinear for div and cell values
+            //  auto uv = float2(float(x)/1023.0f, float(y)/1023.0f);
+            //  auto pos_float = float2(uv.x * float(sim_w - 1), uv.y * float(sim_h - 1));
             //
-            // //0 - 1 down dir in y and 0 - 1 right in x
-            // auto wx = pos_float.x - floor(pos_float.x);
-            // auto wy = pos_float.y - floor(pos_float.y);
+            //  //0 - 1 down dir in y and 0 - 1 right in x
+            //  auto wx = pos_float.x - floor(pos_float.x);
+            //  auto wy = pos_float.y - floor(pos_float.y);
             //
-            // auto tl = int2(pos_float.x, pos_float.y);
-            // auto tr = int2(ceil(pos_float.x), pos_float.y);
-            // auto bl = int2(pos_float.x, ceil(pos_float.y));
-            // auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
+            //  auto tl = int2(pos_float.x, pos_float.y);
+            //  auto tr = int2(ceil(pos_float.x), pos_float.y);
+            //  auto bl = int2(pos_float.x, ceil(pos_float.y));
+            //  auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
             //
-            // float val_tl = grid_div[tl.y * sim_w + tl.x];
-            // float val_tr = grid_div[tr.y * sim_w + tr.x];
-            // float val_bl = grid_div[bl.y * sim_w + bl.x];
-            // float val_br = grid_div[br.y * sim_w + br.x];
+            //  float val_tl = grid_div[tl.y * sim_w + tl.x];
+            //  float val_tr = grid_div[tr.y * sim_w + tr.x];
+            //  float val_bl = grid_div[bl.y * sim_w + bl.x];
+            //  float val_br = grid_div[br.y * sim_w + br.x];
             //
-            // float top = (val_tl * (1.0f - wx)) + (val_tr * wx);
-            // float bot = (val_bl * (1.0f - wx)) + (val_br * wx);
+            //  float top = (val_tl * (1.0f - wx)) + (val_tr * wx);
+            //  float bot = (val_bl * (1.0f - wx)) + (val_br * wx);
             //
-            // float final = (top * (1.0f - wy)) + (bot * wy);
+            //  float final = (top * (1.0f - wy)) + (bot * wy);
             //
-            // int sim_idx = sim_w * tl.y + tl.x;
-            // float min_val = 0.00000001f;
-            // float max_val = 0.0000001f;
-            // float pres_norm = (final - min_val) / (max_val - min_val);
-            // data[idx] = sin(final);
-            
+            //  int sim_idx = sim_w * tl.y + tl.x;
+            //  float min_val = 0.00000001f;
+            //  float max_val = 0.0000001f;
+            //  float pres_norm = (final - min_val) / (max_val - min_val);
+            //  data[idx] = sin(final);
+
             // bilinear for velocities
-             auto uv = float2(float(x)/1023.0f, float(y)/1023.0f);
-             auto pos_float = float2(uv.x * float(sim_w), uv.y * float(sim_h));
-             //0 - 1 down dir in y and 0 - 1 right in x
-             auto wx = pos_float.x - floor(pos_float.x);
-             auto wy = pos_float.y - floor(pos_float.y);
-            
-             auto tl = int2(pos_float.x, pos_float.y);
-             auto tr = int2(ceil(pos_float.x), pos_float.y);
-             auto bl = int2(pos_float.x, ceil(pos_float.y));
-             auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
-            
-             int edges_w = sim_w + 1;
-            
-             float u_tl = u_edges[tl.y * edges_w + tl.x];
-             float u_tr = u_edges[tr.y * edges_w + tr.x];
-             float u_bl = u_edges[bl.y * edges_w + bl.x];
-             float u_br = u_edges[br.y * edges_w + br.x];
-            
-             float u_top = (u_tl * (1.0f - wx)) + (u_tr * wx);
-             float u_bot = (u_bl * (1.0f - wx)) + (u_br * wx);
-             float u = (u_top * (1.0f - wy)) + (u_bot * wy);
-            
-             float v_tl = v_edges[tl.y * edges_w + tl.x];
-             float v_tr = v_edges[tr.y * edges_w + tr.x];
-             float v_bl = v_edges[bl.y * edges_w + bl.x];
-             float v_br = v_edges[br.y * edges_w + br.x];
-            
-             float v_top = (v_tl * (1.0f - wx)) + (v_tr * wx);
-             float v_bot = (v_bl * (1.0f - wx)) + (v_br * wx);
-             float v = (v_top * (1.0f - wy)) + (v_bot * wy);
-            
+            auto uv = float2(float(x) / 1023.0f, float(y) / 1023.0f);
+            auto pos_float = float2(uv.x * float(sim_w), uv.y * float(sim_h));
+            // 0 - 1 down dir in y and 0 - 1 right in x
+            auto wx = pos_float.x - floor(pos_float.x);
+            auto wy = pos_float.y - floor(pos_float.y);
+
+            auto tl = int2(pos_float.x, pos_float.y);
+            auto tr = int2(ceil(pos_float.x), pos_float.y);
+            auto bl = int2(pos_float.x, ceil(pos_float.y));
+            auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
+
+            int edges_w = sim_w + 1;
+
+            float u_tl = u_edges[tl.y * edges_w + tl.x];
+            float u_tr = u_edges[tr.y * edges_w + tr.x];
+            float u_bl = u_edges[bl.y * edges_w + bl.x];
+            float u_br = u_edges[br.y * edges_w + br.x];
+
+            float u_top = (u_tl * (1.0f - wx)) + (u_tr * wx);
+            float u_bot = (u_bl * (1.0f - wx)) + (u_br * wx);
+            float u = (u_top * (1.0f - wy)) + (u_bot * wy);
+
+            float v_tl = v_edges[tl.y * edges_w + tl.x];
+            float v_tr = v_edges[tr.y * edges_w + tr.x];
+            float v_bl = v_edges[bl.y * edges_w + bl.x];
+            float v_br = v_edges[br.y * edges_w + br.x];
+
+            float v_top = (v_tl * (1.0f - wx)) + (v_tr * wx);
+            float v_bot = (v_bl * (1.0f - wx)) + (v_br * wx);
+            float v = (v_top * (1.0f - wy)) + (v_bot * wy);
+
             float speed = sqrtf(u * u + v * v);
 
             float norm_speed = (speed - min_speed) / (max_speed - min_speed);
-            data[idx] = norm_speed;
+
+            data[idx] = speed;
         }
-        
-    }
+
+    } // namespace code_tests
 } // namespace code_kernels
 
 #endif // CODEKERNELS_HPP

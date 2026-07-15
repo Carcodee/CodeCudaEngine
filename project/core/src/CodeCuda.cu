@@ -13,11 +13,8 @@ namespace CodeCuda
     static CodeSimulation::c_grid simulation = {};
     static void *grid_pressures_d;
     static void *grid_div_d;
-    static void *grid_v_d;
     static void *u_d;
     static void *v_d;
-    static int width = 100;
-    static int height = 100;
     void add_kernel_launcher(const std::string &name, std::function<void(cudaStream_t)> kernelFunc,
                              std::map<std::string, kernel_launcher> &kernels_out)
     {
@@ -60,7 +57,7 @@ namespace CodeCuda
 
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
-        simulation.InitGrid(width, height);
+        simulation.InitGrid(s_width, s_height);
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("");
         CODECUDA_PRINTLN("");
@@ -165,7 +162,6 @@ namespace CodeCuda
             {
                 CODE_API::CW_Malloc(&grid_pressures_d, simulation.grid.size() * sizeof(float));
                 CODE_API::CW_Malloc(&grid_div_d, simulation.grid.size() * sizeof(float));
-                CODE_API::CW_Malloc(&grid_v_d, simulation.grid.size() * sizeof(float));
                 CODE_API::CW_Malloc(&u_d, simulation.u_edges.size() * sizeof(float));
                 CODE_API::CW_Malloc(&v_d, simulation.v_edges.size() * sizeof(float));
             }
@@ -182,7 +178,6 @@ namespace CodeCuda
             for (int i = 0; i < simulation.grid.size(); ++i)
             {
                 divs[i] = simulation.grid[i].div;
-                v[i] = simulation.grid[i].cell_velocity;
                 pressures[i] = simulation.grid[i].pressure;
             }
             for (int i = 0; i < simulation.u_edges.size(); ++i)
@@ -196,8 +191,6 @@ namespace CodeCuda
                                 cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(grid_pressures_d, v.data(), simulation.grid.size() * sizeof(float),
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(grid_v_d, pressures.data(), simulation.grid.size() * sizeof(float),
-                                cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(u_d, u_edges.data(), simulation.u_edges.size() * sizeof(float), cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(v_d, v_edges.data(), simulation.v_edges.size() * sizeof(float), cudaMemcpyHostToDevice);
 
@@ -208,8 +201,9 @@ namespace CodeCuda
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
             code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(
-                1024 * 1024, simulation.w, simulation.h, simulation.min_speed, simulation.max_speed, simulation.avg_speed,(float *)u_d, (float *)v_d, (float *)grid_v_d,
-                (float *)grid_div_d, (float *)grid_pressures_d, (float *)this->mappedPtr);
+                1024 * 1024, simulation.w, simulation.h, simulation.min_speed, simulation.max_speed,
+                simulation.avg_speed, (float *)u_d, (float *)v_d, (float *)grid_div_d,
+                (float *)grid_pressures_d, (float *)this->mappedPtr);
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -236,13 +230,12 @@ namespace CodeCuda
 
         CODE_API::CW_Free(grid_pressures_d);
         CODE_API::CW_Free(grid_div_d);
-        CODE_API::CW_Free(grid_v_d);
         this->stream = nullptr;
         this->device = -1;
         this->initialized = false;
         return C_Res::OK;
     }
-    
+
     C_Res C_AddRandomVelocity(int scale)
     {
         int x = rand() % simulation.w;
@@ -252,8 +245,8 @@ namespace CodeCuda
 
         float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
         float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
-        
-        simulation.AddVelocity(x, y, r, vel_x, vel_y);
+
+        C_AddVelocity(x, y, r, vel_x, vel_y);
         return C_Res::OK;
     }
 
@@ -289,7 +282,7 @@ namespace CodeCuda
     {
         if (!simulation.ready_to_run)
         {
-            simulation.InitGrid(width, height);
+            simulation.InitGrid(s_width, s_height);
         }
         simulation.UpdateSimulation();
         return C_Res::OK;
