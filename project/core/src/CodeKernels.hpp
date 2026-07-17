@@ -665,7 +665,7 @@ namespace code_kernels
             int x = idx % 1024;
             int y = idx / 1024;
 
-            // bilinear for div and cell values
+            // // bilinear for div and cell values
             //  auto uv = float2(float(x)/1023.0f, float(y)/1023.0f);
             //  auto pos_float = float2(uv.x * float(sim_w - 1), uv.y * float(sim_h - 1));
             //
@@ -692,7 +692,7 @@ namespace code_kernels
             //  float min_val = 0.00000001f;
             //  float max_val = 0.0000001f;
             //  float pres_norm = (final - min_val) / (max_val - min_val);
-            //  data[idx] = sin(final);
+            //  data[idx] = final;
 
             // bilinear for velocities
             auto uv = float2(float(x) / 1023.0f, float(y) / 1023.0f);
@@ -700,36 +700,36 @@ namespace code_kernels
             // 0 - 1 down dir in y and 0 - 1 right in x
             auto wx = pos_float.x - floor(pos_float.x);
             auto wy = pos_float.y - floor(pos_float.y);
-
+            
             auto tl = int2(pos_float.x, pos_float.y);
             auto tr = int2(ceil(pos_float.x), pos_float.y);
             auto bl = int2(pos_float.x, ceil(pos_float.y));
             auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
-
+            
             int edges_w = sim_w + 1;
-
+            
             float u_tl = u_edges[tl.y * edges_w + tl.x];
             float u_tr = u_edges[tr.y * edges_w + tr.x];
             float u_bl = u_edges[bl.y * edges_w + bl.x];
             float u_br = u_edges[br.y * edges_w + br.x];
-
+            
             float u_top = (u_tl * (1.0f - wx)) + (u_tr * wx);
             float u_bot = (u_bl * (1.0f - wx)) + (u_br * wx);
             float u = (u_top * (1.0f - wy)) + (u_bot * wy);
-
+            
             float v_tl = v_edges[tl.y * edges_w + tl.x];
             float v_tr = v_edges[tr.y * edges_w + tr.x];
             float v_bl = v_edges[bl.y * edges_w + bl.x];
             float v_br = v_edges[br.y * edges_w + br.x];
-
+            
             float v_top = (v_tl * (1.0f - wx)) + (v_tr * wx);
             float v_bot = (v_bl * (1.0f - wx)) + (v_br * wx);
             float v = (v_top * (1.0f - wy)) + (v_bot * wy);
-
+            
             float speed = sqrtf(u * u + v * v);
-
+            
             float norm_speed = (speed - min_speed) / (max_speed - min_speed);
-
+            
             data[idx] = speed;
         }
 

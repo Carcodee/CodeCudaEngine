@@ -321,15 +321,16 @@ namespace CodeSimulation
         bool is_wall = false;
         float GetState() { return is_wall ? 0.0f : 1.0f; }
     };
+    //todo: fix my vertical convention
     struct c_cell
     {
         float div = 0.0f;
         bool is_wall = false;
         int s = 0;
-        float density = 1.0f;
         float pressure = 0.0f;
         float pressure_grad = 0.0f;
         float speed = 0.0f;
+        float GetState() { return is_wall ? 0.0f : 1.0f; }
     };
     struct c_grid
     {
@@ -351,22 +352,16 @@ namespace CodeSimulation
                 int x = i % edge_w;
                 int y = i / edge_w;
                 u_edges[i].is_wall = IsWall(x, y, edge_w, edge_h);
-                if (!u_edges[i].is_wall)
-                {
-                    // u_edges[i].vec =
-                    // (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.1f;
-                }
+                u_edges[i].vec =
+                (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.1f;
             }
             for (int i = 0; i < v_edges.size(); ++i)
             {
                 int x = i % edge_w;
                 int y = i / edge_w;
                 v_edges[i].is_wall = IsWall(x, y, edge_w, edge_h);
-                if (!v_edges[i].is_wall)
-                {
-                    // v_edges[i].vec =
-                    // (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.1f;
-                }
+                v_edges[i].vec =
+                (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.1f;
             }
 
             for (int i = 0; i < grid.size(); ++i)
@@ -379,6 +374,30 @@ namespace CodeSimulation
                     valid_cell_count++;
                 }
             }
+            for (int i = 0; i < grid.size(); ++i)
+            {
+                c_edge *edge_u_left_out = nullptr;
+                c_edge *edge_u_right_out = nullptr;
+                c_edge *edge_v_top_out = nullptr;
+                c_edge *edge_v_bottom_out = nullptr;
+                int x = i % w;
+                int y = i / w;
+                GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
+                if (grid[i].is_wall)
+                {
+                    edge_u_left_out->is_wall = grid[i].is_wall;
+                    edge_u_right_out->is_wall = grid[i].is_wall;
+                    edge_v_top_out->is_wall = grid[i].is_wall;
+                    edge_v_bottom_out->is_wall = grid[i].is_wall;
+                    edge_u_left_out->vec = 0.0f;
+                    edge_u_right_out->vec = 0.0f;
+                    edge_v_top_out->vec = 0.0f;
+                    edge_v_bottom_out->vec = 0.0f;
+                }
+                
+            }
+            
+            
             for (int i = 0; i < grid.size(); ++i)
             {
                 c_edge *edge_u_left_out = nullptr;
@@ -408,9 +427,9 @@ namespace CodeSimulation
         }
         void UpdateSimulation()
         {
-            UpdateVelocity();
             AdvectVelocity();
-            UpdateDiv();
+            Projection();
+            UpdateVelocity();
             UpdateData();
         }
 
@@ -510,20 +529,20 @@ namespace CodeSimulation
     private:
         float GetVFromU(int x, int y, float u, std::vector<c_edge> &v_edges_old)
         {
-            float tl_v = v_edges_old[y * edge_w + x].vec;
-            float tr_v = v_edges_old[y * edge_w + (x + 1)].vec;
-            float bl_v = v_edges_old[(y + 1) * edge_w + x].vec;
-            float br_v = v_edges_old[(y + 1) * edge_w + (x + 1)].vec;
+            float tl_v = v_edges_old[(y + 1) * edge_w + x].vec;
+            float tr_v = v_edges_old[(y + 1) * edge_w + (x + 1)].vec;
+            float bl_v = v_edges_old[y * edge_w + x].vec;
+            float br_v = v_edges_old[y * edge_w + (x + 1)].vec;
             float v = (tl_v + tr_v + bl_v + br_v) * 0.25f;
             return v;
         }
 
         float GetUFromV(int x, int y, float v, std::vector<c_edge> &u_edges_old)
         {
-            float tl_u = u_edges_old[y * edge_w + x].vec;
-            float tr_u = u_edges_old[y * edge_w + (x + 1)].vec;
-            float bl_u = u_edges_old[(y + 1) * edge_w + x].vec;
-            float br_u = u_edges_old[(y + 1) * edge_w + (x + 1)].vec;
+            float tl_u = u_edges_old[(y + 1) * edge_w + x].vec;
+            float tr_u = u_edges_old[(y + 1) * edge_w + (x + 1)].vec;
+            float bl_u = u_edges_old[y * edge_w + x].vec;
+            float br_u = u_edges_old[y * edge_w + (x + 1)].vec;
             float u = (tl_u + tr_u + bl_u + br_u) * 0.25f;
             return u;
         }
@@ -549,10 +568,10 @@ namespace CodeSimulation
                     v_edges[i].speed = std::sqrt(v * v + u * u);
                     xy[0] = std::clamp(xy[0], 0.0f, float(edge_w - 2));
                     xy[1] = std::clamp(xy[1], 0.0f, float(edge_h - 2));
-                    float tl_u_prev = u_edges_old[int(xy[1]) * edge_w + int(xy[0])].vec;
-                    float tr_u_prev = u_edges_old[int(xy[1]) * edge_w + (int(xy[0]) + 1)].vec;
-                    float bl_u_prev = u_edges_old[(int(xy[1]) + 1) * edge_w + int(xy[0])].vec;
-                    float br_u_prev = u_edges_old[(int(xy[1]) + 1) * edge_w + (int(xy[0]) + 1)].vec;
+                    float tl_u_prev = u_edges_old[int(xy[1] + 1) * edge_w + int(xy[0])].vec;
+                    float tr_u_prev = u_edges_old[int(xy[1] + 1) * edge_w + (int(xy[0]) + 1)].vec;
+                    float bl_u_prev = u_edges_old[(int(xy[1])) * edge_w + int(xy[0])].vec;
+                    float br_u_prev = u_edges_old[(int(xy[1])) * edge_w + (int(xy[0]) + 1)].vec;
 
                     float wx = xy[0] - floor(xy[0]);
                     float wy = xy[1] - floor(xy[1]);
@@ -560,7 +579,7 @@ namespace CodeSimulation
                     float top = tl_u_prev * (1.0f - wx) + tr_u_prev * (wx);
                     float bot = bl_u_prev * (1.0f - wx) + br_u_prev * (wx);
 
-                    float advected_u = top * (1.0f - wy) + bot * (wy);
+                    float advected_u = top * (wy) + bot * (1.0f - wy);
                     u_edges[i].acc = (advected_u - u_edges_old[i].vec);
                     u_edges[i].vec = advected_u;
                 }
@@ -582,14 +601,14 @@ namespace CodeSimulation
                     v_edges[i].speed = std::sqrt(v * v + u * u);
 
                     float pos[2] = {float(x), float(y)};
-                    float xy[2] = {pos[0] - u * dt / dx, pos[1] - v * dt / dy};
+                    float xy[2] = {pos[0] - u * dt / dx , pos[1] - v * dt / dy };
                     xy[0] = std::clamp(xy[0], 0.0f, float(edge_w - 2));
                     xy[1] = std::clamp(xy[1], 0.0f, float(edge_h - 2));
 
-                    float tl_v_prev = v_edges_old[int(xy[1]) * edge_w + int(xy[0])].vec;
-                    float tr_v_prev = v_edges_old[int(xy[1]) * edge_w + (int(xy[0]) + 1)].vec;
-                    float bl_v_prev = v_edges_old[(int(xy[1]) + 1) * edge_w + int(xy[0])].vec;
-                    float br_v_prev = v_edges_old[(int(xy[1]) + 1) * edge_w + (int(xy[0]) + 1)].vec;
+                    float tl_v_prev = v_edges_old[int(xy[1] + 1) * edge_w + int(xy[0])].vec;
+                    float tr_v_prev = v_edges_old[int(xy[1] + 1) * edge_w + (int(xy[0]) + 1)].vec;
+                    float bl_v_prev = v_edges_old[(int(xy[1])) * edge_w + int(xy[0])].vec;
+                    float br_v_prev = v_edges_old[(int(xy[1])) * edge_w + (int(xy[0]) + 1)].vec;
 
                     float wx = xy[0] - floor(xy[0]);
                     float wy = xy[1] - floor(xy[1]);
@@ -597,7 +616,7 @@ namespace CodeSimulation
                     float top = tl_v_prev * (1.0f - wx) + tr_v_prev * (wx);
                     float bot = bl_v_prev * (1.0f - wx) + br_v_prev * (wx);
 
-                    float advected_v = top * (1.0f - wy) + bot * (wy);
+                    float advected_v = top * (wy) + bot * (1.0f - wy);
 
                     v_edges[i].acc = (advected_v - v_edges_old[i].vec);
                     v_edges[i].vec = advected_v;
@@ -612,52 +631,117 @@ namespace CodeSimulation
         void UpdateVelocity()
         {
             float gravity = (g * gravity_sign);
-
-
-            // for (int i = 0; i < u_edges.size(); ++i)
-            // {
-            //     if (u_edges[i].is_wall)
-            //     {
-            //         continue;
-            //     }
-            //     int x = i % edge_w;
-            //     int y = i % edge_h;
-            //     float press_l = grid[y * w + (x - 1)].pressure;
-            //     float press_r = grid[y * h + (x)].pressure;
-            //     float grad_press = ((press_l - press_r) * dt);
-            //     u_edges[i].vec += grad_press;
-            //
-            //     float press_t = grid[(y - 1) * w + x].pressure;
-            //     float press_b = grid[y * h + x].pressure;
-            //     grad_press = ((press_t - press_b) * dt);
-            //     v_edges[i].vec += grad_press;
-            // }
-            //
+            float k = dt/(density * dx);
+            for (int y = 0; y < edge_h; ++y)
+            {
+                for (int x = 0; x < edge_w; ++x)
+                {
+                    c_edge& edge = GetU(x, y);
+                    if (edge.is_wall)
+                    {
+                        edge.vec = 0.0f;
+                        continue;
+                    }
+                    
+                    float press_r = GetCell(x, y).pressure;
+                    float press_l = GetCell(x - 1, y).pressure;
+                    edge.vec = edge.vec - (k * (press_r - press_l));
+                }
+            }
+            k = dt/(density * dy);
+            for (int y = 0; y < edge_h; ++y)
+            {
+                for (int x = 0; x < edge_w; ++x)
+                {
+                    c_edge& edge = GetV(x, y);
+                    if (edge.is_wall)
+                    {
+                        edge.vec = 0.0f;
+                        continue;
+                    }
+                    float press_t = GetCell(x, y).pressure;
+                    float press_b = GetCell(x, y - 1).pressure;
+                    edge.vec = edge.vec - (k * (press_t - press_b));
+                }
+            }
             for (int i = 0; i < v_edges.size(); ++i)
             {
                 if (v_edges[i].is_wall)
                 {
+                    v_edges[i].vec = 0.0f;
                     continue;
                 }
                 v_edges[i].vec += (dt * (gravity));
             }
         }
-        void UpdateDiv()
+        c_cell& GetCell(int x,int y)
+        {
+            assert(x < w && x >= 0);
+            assert(y < h && y >= 0);
+            return grid[y * w + x];
+        }
+        
+        c_edge& GetU(int x,int y)
+        {
+            assert(x < edge_w && x >= 0);
+            assert(y < edge_h && y >= 0);
+            return u_edges[y * edge_w + x];
+        }
+        c_edge& GetV(int x,int y)
+        {
+            assert(x < edge_w && x >= 0);
+            assert(y < edge_h && y >= 0);
+            return v_edges[y * edge_w + x];;
+        }
+        void Projection()
         {
             int converged = 0;
             int idx = 0;
-            for (int i = 0; i < grid.size(); ++i)
-            {
-                if (grid[i].is_wall)
-                {
-                    continue;
-                }
-                grid[i].pressure = 0.0f;
-            }
-            for (int iter = 0; iter < 100; ++iter)
+            for (int iter = 0; iter < 12; ++iter)
             {
                 for (int i = 0; i < grid.size(); ++i)
                 {
+                    int s = grid[i].s;
+                    if (grid[i].is_wall)
+                    {
+                        continue;
+                    }
+                    if (s == 0)
+                    {
+                        // CODECUDA_PRINTLN("solid");
+                        continue;
+                    }
+                    int x = i % w;
+                    int y = i / w;
+                    
+                    c_edge *edge_u_left_out = nullptr;
+                    c_edge *edge_u_right_out = nullptr;
+                    c_edge *edge_v_top_out = nullptr;
+                    c_edge *edge_v_bottom_out = nullptr;
+                    float press_l = GetCell(x - 1, y).pressure * GetCell(x - 1, y).GetState();
+                    float press_r = GetCell(x + 1, y).pressure * GetCell(x + 1, y).GetState();
+                    float press_t = GetCell(x, y + 1).pressure * GetCell(x, y + 1).GetState();
+                    float press_b = GetCell(x, y - 1).pressure * GetCell(x, y - 1).GetState();
+                    
+                    GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
+                    
+                    float press_sum = (press_l + press_r + press_t + press_b);
+                    float u_r = edge_u_right_out->vec * edge_u_right_out->GetState();
+                    float u_l = edge_u_left_out->vec * edge_u_left_out->GetState();
+                    float v_t = edge_v_top_out->vec * edge_v_top_out->GetState();
+                    float v_b = edge_v_bottom_out->vec * edge_v_bottom_out->GetState();
+                    
+                    float velocities_sum = u_r - u_l + v_t - v_b;
+                    float pressure_old = grid[i].pressure;
+                    float pressure_new = (press_sum / float(s)) - (density * dx * velocities_sum) / (float(s) * dt);
+                    grid[i].pressure = pressure_new;
+                    
+                }
+
+                converged = 0;
+                for (int i = 0; i < grid.size(); ++i)
+                {
+                    
                     if (grid[i].is_wall)
                     {
                         continue;
@@ -675,34 +759,11 @@ namespace CodeSimulation
                     int x = i % w;
                     int y = i / w;
                     GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
-                    grid[i].div = Overrelaxation(edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec -
-                                                 edge_v_bottom_out->vec);
-
-                    float correction = grid[i].div / float(s);
-
-                    edge_u_left_out->vec += correction * edge_u_left_out->GetState();
-                    edge_u_right_out->vec -= correction * edge_u_right_out->GetState();
-                    edge_v_bottom_out->vec += correction * edge_v_bottom_out->GetState();
-                    edge_v_top_out->vec -= correction * edge_v_top_out->GetState();
-                    grid[i].pressure += correction * (grid[i].density * dx / dt);
-                }
-
-                converged = 0;
-                for (int i = 0; i < grid.size(); ++i)
-                {
-                    if (grid[i].is_wall)
-                    {
-                        continue;
-                    }
-                    c_edge *edge_u_left_out = nullptr;
-                    c_edge *edge_u_right_out = nullptr;
-                    c_edge *edge_v_top_out = nullptr;
-                    c_edge *edge_v_bottom_out = nullptr;
-                    int x = i % w;
-                    int y = i / w;
-                    GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
                     grid[i].div =
                         edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec - edge_v_bottom_out->vec;
+                    
+                    grid[i].div = Overrelaxation(edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec -
+                                                 edge_v_bottom_out->vec);
                     if (std::abs(grid[i].div) < epsilon)
                     {
                         converged++;
@@ -721,8 +782,8 @@ namespace CodeSimulation
             edge_u_left_out = &u_edges[y * edge_w + x];
             edge_u_right_out = &u_edges[y * edge_w + (x + 1)];
 
-            edge_v_top_out = &v_edges[y * edge_w + x];
-            edge_v_bottom_out = &v_edges[(y + 1) * edge_w + x];
+            edge_v_top_out = &v_edges[(y + 1) * edge_w + x];
+            edge_v_bottom_out = &v_edges[y * edge_w + x];
         }
 
 
@@ -854,36 +915,36 @@ namespace CodeSimulation
 
             const float px = (float(x) + 0.5f) / float(w);
             const float py = (float(y) + 0.5f) / float(h);
-
+            
             const float dx = px - 0.5f;
             const float dy = py - 0.5f;
-
-            constexpr float radius = 0.15f;
+            
+            constexpr float radius = 0.05f;
 
             return dx * dx + dy * dy <= radius * radius;
         }
-        bool IsWall(int x, int y, int gridWidth, int gridHeight) const
-        {
+        bool IsWall(int x, int y, int gridWidth, int gridHeight) const {
             // Outer domain boundary
             if (x == 0 || x == gridWidth - 1 || y == 0 || y == gridHeight - 1)
             {
                 return true;
             }
+            return false;
 
-            // Convert the integer coordinate to normalized [0, 1] space.
-            const float normalizedX = float(x) / float(gridWidth - 1);
-            const float normalizedY = float(y) / float(gridHeight - 1);
-
-            const float centerX = 0.5f;
-            const float centerY = 0.5f;
-
-            // Radius relative to the domain size.
-            const float radius = 0.15f;
-
-            const float offsetX = normalizedX - centerX;
-            const float offsetY = normalizedY - centerY;
-
-            return offsetX * offsetX + offsetY * offsetY <= radius * radius;
+            // // Convert the integer coordinate to normalized [0, 1] space.
+            // const float normalizedX = float(x) / float(gridWidth - 1);
+            // const float normalizedY = float(y) / float(gridHeight - 1);
+            //
+            // const float centerX = 0.5f;
+            // const float centerY = 0.5f;
+            //
+            // // Radius relative to the domain size.
+            // const float radius = 0.15f;
+            //
+            // const float offsetX = normalizedX - centerX;
+            // const float offsetY = normalizedY - centerY;
+            //
+            // return offsetX * offsetX + offsetY * offsetY <= radius * radius;
         }
         const float epsilon = 0.0001f;
         float dt = 1.0f / 60.0f;
@@ -908,8 +969,10 @@ namespace CodeSimulation
         std::vector<std::vector<c_cell>> solved_grid_u;
         std::vector<std::vector<c_cell>> solved_grid_v;
         int gravity_sign = 1;
+        float density = 0.1;
         int64_t sim_step_idx = 0;
         float total_t = 0.0f;
+        float weight_sor = 1.6f;
     };
 
 
