@@ -313,6 +313,141 @@ namespace CodeBenchmarking
 } // namespace CodeBenchmarking
 namespace CodeSimulation
 {
+    
+    
+    struct c_cells
+    {
+        std::vector<float> divs;
+        std::vector<float> pressures;
+        std::vector<uint8_t> is_walls;
+        std::vector<uint8_t> edge_states;
+        int valid_cell_count = 0;
+        int w = -1;
+        int h = -1;
+        
+        void Resize(int w, int h)
+        {
+            this->w = w;
+            this->h = h;
+            divs.resize(w * h);
+            pressures.resize(w * h);
+            is_walls.resize(w * h);
+            edge_states.resize(w * h);
+            valid_cell_count = 0;
+            
+            for (int i = 0; i < is_walls.size(); ++i)
+            {
+                int x = i % w;
+                int y = i / w;
+                is_walls[i] = IsSolidCell(x, y);
+                if (!is_walls[i])
+                {
+                    valid_cell_count++;
+                }
+            }
+        }
+        float GetCellFluidState(int x, int y)
+        {
+            assert(x >= 0 && x < w);
+            assert(y >= 0 && y < h);
+
+            return is_walls[y * w + x] ? 0.0f : 1.0f;
+        } 
+        float& GetCellPressure(int x,int y)
+        {
+            assert(x < w && x >= 0);
+            assert(y < h && y >= 0);
+            return pressures[y * w + x];
+        }
+        
+        uint8_t& GetEdgesState(int x,int y)
+        {
+            assert(x < w && x >= 0);
+            assert(y < h && y >= 0);
+            return edge_states[y * w + x];
+        }
+        
+        bool IsSolidCell(int x, int y) const
+        {
+            if (x == 0 || x == w - 1 || y == 0 || y == h - 1)
+            {
+                return true;
+            }
+
+            const float px = (float(x) + 0.5f) / float(w);
+            const float py = (float(y) + 0.5f) / float(h);
+            
+            const float dx = px - 0.5f;
+            const float dy = py - 0.5f;
+            
+            constexpr float radius = 0.05f;
+
+            return dx * dx + dy * dy <= radius * radius;
+        }
+        
+    };
+    struct c_edges
+    {
+        int edges_w;
+        int edges_h;
+        std::vector<float> u;
+        std::vector<float> v;
+        std::vector<float> accs;
+        std::vector<uint8_t> is_walls_u;
+        std::vector<uint8_t> is_walls_v;
+        
+        float GetV(int x, int y)
+        {
+            return u[y * edges_w + x];
+        }
+        float GetU(int x, int y)
+        {
+            return v[y * edges_w + x];
+        }
+        
+        float GetStateU(int x, int y)
+        {
+            return is_walls_u[y * edges_w + x];
+        }
+        
+        float GetStateV(int x, int y)
+        {
+            return is_walls_u[y * edges_w + x];
+        }
+        void Resize(int w, int h)
+        {
+            this->edges_w = w;
+            this->edges_h = h;
+            u.resize(w * h);
+            v.resize(w * h);
+            
+            for (int i = 0; i < u.size(); ++i)
+            {
+                int x = i % edges_w;
+                int y = i / edges_w;
+                is_walls_u[i] = IsWall(x, y, edges_w, edges_h);
+                u[i] =
+                (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.6f;
+            }
+            for (int i = 0; i < v.size(); ++i)
+            {
+                int x = i % edges_w;
+                int y = i / edges_w;
+                is_walls_v[i] = IsWall(x, y, edges_w, edges_h);
+                v[i] =
+                (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.6f;
+            }
+        }
+        
+        bool IsWall(int x, int y, int gridWidth, int gridHeight) const {
+            // Outer domain boundary
+            if (x == 0 || x == gridWidth - 1 || y == 0 || y == gridHeight - 1)
+            {
+                return true;
+            }
+            return false;
+        }
+    };
     struct c_edge
     {
         float vec = 0.0f;
@@ -321,15 +456,12 @@ namespace CodeSimulation
         bool is_wall = false;
         float GetState() { return is_wall ? 0.0f : 1.0f; }
     };
-    //todo: fix my vertical convention
     struct c_cell
     {
+        float pressure = 0.0f;
         float div = 0.0f;
         bool is_wall = false;
         int s = 0;
-        float pressure = 0.0f;
-        float pressure_grad = 0.0f;
-        float speed = 0.0f;
         float GetState() { return is_wall ? 0.0f : 1.0f; }
     };
     struct c_grid
@@ -343,7 +475,7 @@ namespace CodeSimulation
             this->h = height;
             this->dx = 1.0f / float(w);
             this->dy = 1.0f / float(h);
-            grid.resize(width * height);
+            
             u_edges.resize(edge_w * edge_h);
             v_edges.resize(edge_w * edge_h);
 
@@ -353,7 +485,7 @@ namespace CodeSimulation
                 int y = i / edge_w;
                 u_edges[i].is_wall = IsWall(x, y, edge_w, edge_h);
                 u_edges[i].vec =
-                (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.1f;
+                (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.6f;
             }
             for (int i = 0; i < v_edges.size(); ++i)
             {
@@ -361,20 +493,12 @@ namespace CodeSimulation
                 int y = i / edge_w;
                 v_edges[i].is_wall = IsWall(x, y, edge_w, edge_h);
                 v_edges[i].vec =
-                (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.1f;
+                (float(rand()) / float(RAND_MAX) * 2.0f - 1.0f) * 0.6f;
             }
 
-            for (int i = 0; i < grid.size(); ++i)
-            {
-                int x = i % w;
-                int y = i / w;
-                grid[i].is_wall = IsSolidCell(x, y);
-                if (!grid[i].is_wall)
-                {
-                    valid_cell_count++;
-                }
-            }
-            for (int i = 0; i < grid.size(); ++i)
+            cells_data.Resize(w, h);
+            
+            for (int i = 0; i < cells_data.pressures.size(); ++i)
             {
                 c_edge *edge_u_left_out = nullptr;
                 c_edge *edge_u_right_out = nullptr;
@@ -383,47 +507,26 @@ namespace CodeSimulation
                 int x = i % w;
                 int y = i / w;
                 GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
-                if (grid[i].is_wall)
+                if (cells_data.is_walls[i])
                 {
-                    edge_u_left_out->is_wall = grid[i].is_wall;
-                    edge_u_right_out->is_wall = grid[i].is_wall;
-                    edge_v_top_out->is_wall = grid[i].is_wall;
-                    edge_v_bottom_out->is_wall = grid[i].is_wall;
+                    edge_u_left_out->is_wall = cells_data.is_walls[i];
+                    edge_u_right_out->is_wall = cells_data.is_walls[i];
+                    edge_v_top_out->is_wall = cells_data.is_walls[i];
+                    edge_v_bottom_out->is_wall = cells_data.is_walls[i];
                     edge_u_left_out->vec = 0.0f;
                     edge_u_right_out->vec = 0.0f;
                     edge_v_top_out->vec = 0.0f;
                     edge_v_bottom_out->vec = 0.0f;
                 }
-                
+                cells_data.edge_states[i] = static_cast<uint8_t>(
+                    edge_u_left_out->GetState() +
+                    edge_u_right_out->GetState() +
+                    edge_v_top_out->GetState() +
+                    edge_v_bottom_out->GetState()
+                ); 
             }
             
-            
-            for (int i = 0; i < grid.size(); ++i)
-            {
-                c_edge *edge_u_left_out = nullptr;
-                c_edge *edge_u_right_out = nullptr;
-                c_edge *edge_v_top_out = nullptr;
-                c_edge *edge_v_bottom_out = nullptr;
-                int x = i % w;
-                int y = i / w;
-                GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
-                grid[i].s = edge_u_left_out->GetState() + edge_u_right_out->GetState() + edge_v_top_out->GetState() +
-                    edge_v_bottom_out->GetState();
-            }
             ready_to_run = true;
-        }
-        void RunSimulation(int steps)
-        {
-            solved_grid_states.resize(steps);
-            solved_grid_u.resize(steps);
-            solved_grid_v.resize(steps);
-            for (int i = 0; i < steps; ++i)
-            {
-                UpdateSimulation();
-                memcpy(solved_grid_states[i].data(), grid.data(), grid.size() * sizeof(c_cell));
-                memcpy(solved_grid_u[i].data(), u_edges.data(), u_edges.size() * sizeof(c_edge));
-                memcpy(solved_grid_v[i].data(), v_edges.data(), v_edges.size() * sizeof(c_edge));
-            }
         }
         void UpdateSimulation()
         {
@@ -643,8 +746,8 @@ namespace CodeSimulation
                         continue;
                     }
                     
-                    float press_r = GetCell(x, y).pressure;
-                    float press_l = GetCell(x - 1, y).pressure;
+                    float press_r = cells_data.GetCellPressure(x, y);
+                    float press_l = cells_data.GetCellPressure(x - 1, y);
                     edge.vec = edge.vec - (k * (press_r - press_l));
                 }
             }
@@ -659,26 +762,20 @@ namespace CodeSimulation
                         edge.vec = 0.0f;
                         continue;
                     }
-                    float press_t = GetCell(x, y).pressure;
-                    float press_b = GetCell(x, y - 1).pressure;
+                    float press_t = cells_data.GetCellPressure(x, y);
+                    float press_b = cells_data.GetCellPressure(x, y - 1);
                     edge.vec = edge.vec - (k * (press_t - press_b));
                 }
             }
-            for (int i = 0; i < v_edges.size(); ++i)
-            {
-                if (v_edges[i].is_wall)
-                {
-                    v_edges[i].vec = 0.0f;
-                    continue;
-                }
-                v_edges[i].vec += (dt * (gravity));
-            }
-        }
-        c_cell& GetCell(int x,int y)
-        {
-            assert(x < w && x >= 0);
-            assert(y < h && y >= 0);
-            return grid[y * w + x];
+            // for (int i = 0; i < v_edges.size(); ++i)
+            // {
+            //     if (v_edges[i].is_wall)
+            //     {
+            //         v_edges[i].vec = 0.0f;
+            //         continue;
+            //     }
+            //     v_edges[i].vec += (dt * (gravity));
+            // }
         }
         
         c_edge& GetU(int x,int y)
@@ -699,29 +796,29 @@ namespace CodeSimulation
             int idx = 0;
             for (int iter = 0; iter < 12; ++iter)
             {
-                for (int i = 0; i < grid.size(); ++i)
+                for (int i = 0; i < cells_data.pressures.size(); ++i)
                 {
-                    int s = grid[i].s;
-                    if (grid[i].is_wall)
+                    if (cells_data.is_walls[i] == 1)
                     {
                         continue;
                     }
+                    int x = i % w;
+                    int y = i / w;
+                    int s = cells_data.GetEdgesState(x, y);
                     if (s == 0)
                     {
                         // CODECUDA_PRINTLN("solid");
                         continue;
                     }
-                    int x = i % w;
-                    int y = i / w;
                     
                     c_edge *edge_u_left_out = nullptr;
                     c_edge *edge_u_right_out = nullptr;
                     c_edge *edge_v_top_out = nullptr;
                     c_edge *edge_v_bottom_out = nullptr;
-                    float press_l = GetCell(x - 1, y).pressure * GetCell(x - 1, y).GetState();
-                    float press_r = GetCell(x + 1, y).pressure * GetCell(x + 1, y).GetState();
-                    float press_t = GetCell(x, y + 1).pressure * GetCell(x, y + 1).GetState();
-                    float press_b = GetCell(x, y - 1).pressure * GetCell(x, y - 1).GetState();
+                    float press_l = cells_data.GetCellPressure(x - 1, y) * cells_data.GetCellFluidState(x - 1, y);
+                    float press_r = cells_data.GetCellPressure(x + 1, y) * cells_data.GetCellFluidState(x + 1, y);
+                    float press_t = cells_data.GetCellPressure(x, y + 1) * cells_data.GetCellFluidState(x, y + 1);
+                    float press_b = cells_data.GetCellPressure(x, y - 1) * cells_data.GetCellFluidState(x, y - 1);
                     
                     GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
                     
@@ -732,21 +829,22 @@ namespace CodeSimulation
                     float v_b = edge_v_bottom_out->vec * edge_v_bottom_out->GetState();
                     
                     float velocities_sum = u_r - u_l + v_t - v_b;
-                    float pressure_old = grid[i].pressure;
+                    float pressure_old = cells_data.pressures[i];
                     float pressure_new = (press_sum / float(s)) - (density * dx * velocities_sum) / (float(s) * dt);
-                    grid[i].pressure = pressure_new;
-                    
+                    cells_data.pressures[i] = pressure_new;
                 }
 
                 converged = 0;
-                for (int i = 0; i < grid.size(); ++i)
+                for (int i = 0; i < cells_data.pressures.size(); ++i)
                 {
                     
-                    if (grid[i].is_wall)
+                    if (cells_data.is_walls[i])
                     {
                         continue;
                     }
-                    int s = grid[i].s;
+                    int x = i % w;
+                    int y = i / w;
+                    int s = cells_data.GetEdgesState(x, y);
                     if (s == 0)
                     {
                         // CODECUDA_PRINTLN("solid");
@@ -756,15 +854,11 @@ namespace CodeSimulation
                     c_edge *edge_u_right_out = nullptr;
                     c_edge *edge_v_top_out = nullptr;
                     c_edge *edge_v_bottom_out = nullptr;
-                    int x = i % w;
-                    int y = i / w;
                     GetCellEdges(x, y, edge_u_left_out, edge_u_right_out, edge_v_top_out, edge_v_bottom_out);
-                    grid[i].div =
-                        edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec - edge_v_bottom_out->vec;
                     
-                    grid[i].div = Overrelaxation(edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec -
+                    cells_data.divs[i] = Overrelaxation(edge_u_right_out->vec - edge_u_left_out->vec + edge_v_top_out->vec -
                                                  edge_v_bottom_out->vec);
-                    if (std::abs(grid[i].div) < epsilon)
+                    if (std::abs(cells_data.divs[i]) < epsilon)
                     {
                         converged++;
                     };
@@ -773,7 +867,6 @@ namespace CodeSimulation
             }
             PrintDivergenceConvergence(idx);
         }
-
 
         void GetCellEdges(int x, int y, c_edge *&edge_u_left_out, c_edge *&edge_u_right_out, c_edge *&edge_v_top_out,
                           c_edge *&edge_v_bottom_out)
@@ -784,6 +877,17 @@ namespace CodeSimulation
 
             edge_v_top_out = &v_edges[(y + 1) * edge_w + x];
             edge_v_bottom_out = &v_edges[y * edge_w + x];
+        }
+        
+        void GetCellEdges_n(int x, int y, float *&edge_u_left_out, float *&edge_u_right_out, float *&edge_v_top_out,
+                          float *&edge_v_bottom_out)
+        {
+
+            edge_u_left_out = &edges_data.u[y * edge_w + x];
+            edge_u_right_out = &edges_data.u[y * edge_w + (x + 1)];
+
+            edge_v_top_out = &edges_data.v[(y + 1) * edge_w + x];
+            edge_v_bottom_out = &edges_data.v[y * edge_w + x];
         }
 
 
@@ -813,15 +917,15 @@ namespace CodeSimulation
             this->max_speed = std::numeric_limits<float>::lowest();
             int validVCount = 0;
 
-            for (int i = 0; i < grid.size(); ++i)
+            for (int i = 0; i < cells_data.pressures.size(); ++i)
             {
-                if (grid[i].is_wall)
+                if (cells_data.is_walls[i])
                 {
                     continue;
                 }
 
-                const float absDiv = std::abs(grid[i].div);
-                const float absPres = std::abs(grid[i].pressure);
+                const float absDiv = std::abs(cells_data.divs[i]);
+                const float absPres = std::abs(cells_data.pressures[i]);
 
                 totalCells++;
 
@@ -948,8 +1052,7 @@ namespace CodeSimulation
         }
         const float epsilon = 0.0001f;
         float dt = 1.0f / 60.0f;
-        float g = 0.1f;
-        int valid_cell_count = 0;
+        float g = 9.8f;
         float dx = 0.0f;
         float dy = 0.0f;
 
@@ -962,14 +1065,12 @@ namespace CodeSimulation
         float min_speed = 0.0f;
         float max_speed = 0.0f;
         float avg_speed = 0.0f;
-        std::vector<c_cell> grid;
+        c_cells cells_data;
+        c_edges edges_data;
         std::vector<c_edge> u_edges;
         std::vector<c_edge> v_edges;
-        std::vector<std::vector<c_cell>> solved_grid_states;
-        std::vector<std::vector<c_cell>> solved_grid_u;
-        std::vector<std::vector<c_cell>> solved_grid_v;
         int gravity_sign = 1;
-        float density = 0.1;
+        float density = 1;
         int64_t sim_step_idx = 0;
         float total_t = 0.0f;
         float weight_sor = 1.6f;

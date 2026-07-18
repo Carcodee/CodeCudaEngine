@@ -160,26 +160,15 @@ namespace CodeCuda
             C_UpdateSim();
             if (grid_div_d == nullptr)
             {
-                CODE_API::CW_Malloc(&grid_pressures_d, simulation.grid.size() * sizeof(float));
-                CODE_API::CW_Malloc(&grid_div_d, simulation.grid.size() * sizeof(float));
+                CODE_API::CW_Malloc(&grid_pressures_d, simulation.cells_data.pressures.size() * sizeof(float));
+                CODE_API::CW_Malloc(&grid_div_d, simulation.cells_data.divs.size() * sizeof(float));
                 CODE_API::CW_Malloc(&u_d, simulation.u_edges.size() * sizeof(float));
                 CODE_API::CW_Malloc(&v_d, simulation.v_edges.size() * sizeof(float));
             }
-            std::vector<float> divs;
-            std::vector<float> v;
-            std::vector<float> pressures;
             std::vector<float> u_edges;
             std::vector<float> v_edges;
-            divs.resize(simulation.grid.size());
-            v.resize(simulation.grid.size());
-            pressures.resize(simulation.grid.size());
             u_edges.resize(simulation.u_edges.size());
             v_edges.resize(simulation.v_edges.size());
-            for (int i = 0; i < simulation.grid.size(); ++i)
-            {
-                divs[i] = simulation.grid[i].div;
-                pressures[i] = simulation.grid[i].pressure;
-            }
             for (int i = 0; i < simulation.u_edges.size(); ++i)
             {
                 u_edges[i] = simulation.u_edges[i].vec;
@@ -187,9 +176,9 @@ namespace CodeCuda
             }
 
 
-            CODE_API::CW_Memcpy(grid_div_d, divs.data(), simulation.grid.size() * sizeof(float),
+            CODE_API::CW_Memcpy(grid_div_d, simulation.cells_data.divs.data(), simulation.cells_data.divs.size() * sizeof(float),
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(grid_pressures_d, v.data(), simulation.grid.size() * sizeof(float),
+            CODE_API::CW_Memcpy(grid_pressures_d, simulation.cells_data.pressures.data(), simulation.cells_data.pressures.size() * sizeof(float),
                                 cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(u_d, u_edges.data(), simulation.u_edges.size() * sizeof(float), cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(v_d, v_edges.data(), simulation.v_edges.size() * sizeof(float), cudaMemcpyHostToDevice);
