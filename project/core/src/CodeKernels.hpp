@@ -668,26 +668,26 @@ namespace code_kernels
             // bilinear for div and cell values
              auto uv = float2(float(x)/1023.0f, float(y)/1023.0f);
              auto pos_float = float2(uv.x * float(sim_w - 1), uv.y * float(sim_h - 1));
-            
+             
              //0 - 1 down dir in y and 0 - 1 right in x
              auto wx = pos_float.x - floor(pos_float.x);
              auto wy = pos_float.y - floor(pos_float.y);
-            
+             
              auto tl = int2(pos_float.x, pos_float.y);
              auto tr = int2(ceil(pos_float.x), pos_float.y);
              auto bl = int2(pos_float.x, ceil(pos_float.y));
              auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
-            
+             
              float val_tl = grid_smoke[tl.y * sim_w + tl.x];
              float val_tr = grid_smoke[tr.y * sim_w + tr.x];
              float val_bl = grid_smoke[bl.y * sim_w + bl.x];
              float val_br = grid_smoke[br.y * sim_w + br.x];
-            
+             
              float top = (val_tl * (1.0f - wx)) + (val_tr * wx);
              float bot = (val_bl * (1.0f - wx)) + (val_br * wx);
-            
+             
              float final = (top * (1.0f - wy)) + (bot * wy);
-            
+             
              data[idx] = final;
 
             // bilinear for velocities

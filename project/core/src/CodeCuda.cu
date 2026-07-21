@@ -162,9 +162,9 @@ namespace CodeCuda
             // we usse pressure input since the input is always the last output because we do double buffering for
             // pressures
             code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(
-                1024 * 1024, simulation.w, simulation.h, 1.0f, 1.0f, 1.0f, simulation.edges_view.u,
-                simulation.edges_view.v, simulation.cells_view.divs, simulation.cells_view.pressures_input,
-                simulation.cells_view.smoke, (float *)this->mappedPtr);
+                1024 * 1024, simulation.w, simulation.h, 1.0f, 1.0f, 1.0f, simulation.edges_view.u_output,
+                simulation.edges_view.v_output, simulation.cells_view.divs, simulation.cells_view.pressures_input,
+                simulation.cells_view.smoke_output, (float *)this->mappedPtr);
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -251,6 +251,21 @@ namespace CodeCuda
         simulation.AddRadialVelocity(x_pos, y_pos, radius, scale);
         return C_Res::OK;
     }
+    
+    C_Res C_AddVelocityGPU(int x_pos, int y_pos, int radius, float vel_x, float vel_y, CodeCudaContext* code_cuda_context)
+    {
+        assert(simulation.ready_to_run && "Simulation was not inited");
+        simulation.AddVelocityGPU(x_pos, y_pos, radius, vel_x, vel_y, code_cuda_context->stream);
+        return C_Res::OK;
+    }
+    
+    C_Res C_AddSmokeGPU(int x_pos, int y_pos, int radius, float val, CodeCudaContext* code_cuda_context)
+    {
+        assert(simulation.ready_to_run && "Simulation was not inited");
+        simulation.AddSmokeGPU(x_pos, y_pos, radius, val, code_cuda_context->stream);
+        return C_Res::OK;
+    }
+
     C_Res C_AddVelocity()
     {
         assert(simulation.ready_to_run && "Simulation was not inited");
