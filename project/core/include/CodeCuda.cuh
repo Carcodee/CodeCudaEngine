@@ -54,17 +54,20 @@ namespace CodeCuda
     private:
         float curr_t = 0.0f;
     };
-    
+    //simulation
+    inline int s_width = 256;
+    inline int s_height = 256;
+ 
     C_Res C_Matmul(CodeCudaContext* code_cuda_context, int M, int N, int K, const float *a, const float *b, float *c);
     C_Res C_UpdateSimGPU(CodeCudaContext* code_cuda_context);
-    //simulation
-    static int s_width = 1000;
-    static int s_height = 1000;
     C_Res C_UpdateSimCPU();
     C_Res C_AddRandomVelocity(int scale);
     C_Res C_AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y);
+    C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float val);
     C_Res C_AddRadialVelocity(int x_pos, int y_pos, int radius, float scale);
     C_Res C_SetDebugSimulation(bool value);
+    C_Res C_RestartSimulation();
+    C_Res C_SetSimulationResolution(int w, int h);
 
     class CodeCudaExecutor
     {

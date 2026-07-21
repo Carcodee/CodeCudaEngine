@@ -152,21 +152,19 @@ namespace CodeCuda
 
         CODE_API::CW_ExternalMemoryGetMappedBuffer(&this->mappedPtr, cuda_external_memory, &buffer_desc);
 
-        this->cpu_launcher.task = [this]()
-        {
-            this->curr_t += time_step;
-        };
+        this->cpu_launcher.task = [this]() { this->curr_t += time_step; };
         this->kernel_launcher.kernel = [this](cudaStream_t stream)
         {
             // simulation.UpdateSimDeviceOnly(stream);
             simulation.UpdateSimulationGPU(stream);
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
-            //we usse pressure input since the input is always the last output because we do double buffering for pressures
+            // we usse pressure input since the input is always the last output because we do double buffering for
+            // pressures
             code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(
-                1024 * 1024, simulation.w, simulation.h, 1.0f, 1.0f,
-                1.0f, (float *)simulation.edges_view.u, (float *)simulation.edges_view.v, (float *)simulation.cells_view.divs,
-                (float *)simulation.cells_view.pressures_input, (float *)this->mappedPtr);
+                1024 * 1024, simulation.w, simulation.h, 1.0f, 1.0f, 1.0f, simulation.edges_view.u,
+                simulation.edges_view.v, simulation.cells_view.divs, simulation.cells_view.pressures_input,
+                simulation.cells_view.smoke, (float *)this->mappedPtr);
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -187,6 +185,22 @@ namespace CodeCuda
         simulation.debug = val;
         return C_Res::OK;
     }
+    
+    C_Res C_SetSimulationResolution(int w, int h)
+    {
+        s_width = w; 
+        s_height = h; 
+        simulation.w = s_width;
+        simulation.h = s_height;
+        simulation.RestartSim();
+        return C_Res::OK;
+    }
+    C_Res C_RestartSimulation()
+    {
+        simulation.RestartSim();
+        return C_Res::OK;
+    }
+    
     C_Res CodeCudaContext::C_Shutdown()
     {
         CODECUDA_PRINTLN("Shutdown: CodeCudaEngine");
@@ -196,7 +210,7 @@ namespace CodeCuda
         CODE_API::CW_StreamSynchronize(this->stream);
         CODE_API::CW_StreamDestroy(this->stream);
         simulation.FreeSim();
-        
+
         this->stream = nullptr;
         this->device = -1;
         this->initialized = false;
@@ -205,6 +219,7 @@ namespace CodeCuda
 
     C_Res C_AddRandomVelocity(int scale)
     {
+        assert(simulation.ready_to_run && "Simulation was not inited");
         int x = rand() % simulation.w;
         int y = rand() % simulation.h;
 
@@ -217,19 +232,28 @@ namespace CodeCuda
         return C_Res::OK;
     }
 
+    C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float value)
+    {
+        assert(simulation.ready_to_run && "Simulation was not inited");
+        simulation.AddSmoke(x_pos, y_pos, radius, value);
+        return C_Res::OK;
+    }
     C_Res C_AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
     {
+        assert(simulation.ready_to_run && "Simulation was not inited");
         simulation.AddVelocity(x_pos, y_pos, radius, vel_x, vel_y);
         return C_Res::OK;
     }
 
     C_Res C_AddRadialVelocity(int x_pos, int y_pos, int radius, float scale)
     {
+        assert(simulation.ready_to_run && "Simulation was not inited");
         simulation.AddRadialVelocity(x_pos, y_pos, radius, scale);
         return C_Res::OK;
     }
     C_Res C_AddVelocity()
     {
+        assert(simulation.ready_to_run && "Simulation was not inited");
         int x = rand() % simulation.w;
         int y = rand() % simulation.h;
 
@@ -254,8 +278,8 @@ namespace CodeCuda
         simulation.UpdateSimulationCPU();
         return C_Res::OK;
     }
-    
-    C_Res C_UpdateSimGPU(CodeCudaContext* code_cuda_context)
+
+    C_Res C_UpdateSimGPU(CodeCudaContext *code_cuda_context)
     {
         if (!simulation.ready_to_run)
         {
