@@ -11,10 +11,6 @@ namespace CodeCuda
 
 
     static CodeSimulation::c_grid simulation = {};
-    static void *grid_pressures_d;
-    static void *grid_div_d;
-    static void *u_d;
-    static void *v_d;
     void add_kernel_launcher(const std::string &name, std::function<void(cudaStream_t)> kernelFunc,
                              std::map<std::string, kernel_launcher> &kernels_out)
     {
@@ -130,6 +126,7 @@ namespace CodeCuda
         CODE_API::CW_SetDevice(current_device);
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
+        simulation.InitGrid(s_width, s_height);
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("GPU Device index: ", current_device, "\nName: ", device_prop.name,
                          " \nWith compute capability: ", device_prop.major, device_prop.minor);
@@ -157,42 +154,19 @@ namespace CodeCuda
 
         this->cpu_launcher.task = [this]()
         {
-            C_UpdateSim();
-            if (grid_div_d == nullptr)
-            {
-                CODE_API::CW_Malloc(&grid_pressures_d, simulation.cells_data.pressures.size() * sizeof(float));
-                CODE_API::CW_Malloc(&grid_div_d, simulation.cells_data.divs.size() * sizeof(float));
-                CODE_API::CW_Malloc(&u_d, simulation.u_edges.size() * sizeof(float));
-                CODE_API::CW_Malloc(&v_d, simulation.v_edges.size() * sizeof(float));
-            }
-            std::vector<float> u_edges;
-            std::vector<float> v_edges;
-            u_edges.resize(simulation.u_edges.size());
-            v_edges.resize(simulation.v_edges.size());
-            for (int i = 0; i < simulation.u_edges.size(); ++i)
-            {
-                u_edges[i] = simulation.u_edges[i].vec;
-                v_edges[i] = simulation.v_edges[i].vec;
-            }
-
-
-            CODE_API::CW_Memcpy(grid_div_d, simulation.cells_data.divs.data(), simulation.cells_data.divs.size() * sizeof(float),
-                                cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(grid_pressures_d, simulation.cells_data.pressures.data(), simulation.cells_data.pressures.size() * sizeof(float),
-                                cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(u_d, u_edges.data(), simulation.u_edges.size() * sizeof(float), cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(v_d, v_edges.data(), simulation.v_edges.size() * sizeof(float), cudaMemcpyHostToDevice);
-
             this->curr_t += time_step;
         };
         this->kernel_launcher.kernel = [this](cudaStream_t stream)
         {
+            // simulation.UpdateSimDeviceOnly(stream);
+            simulation.UpdateSimulationGPU(stream);
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
+            //we usse pressure input since the input is always the last output because we do double buffering for pressures
             code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(
-                1024 * 1024, simulation.w, simulation.h, simulation.min_speed, simulation.max_speed,
-                simulation.avg_speed, (float *)u_d, (float *)v_d, (float *)grid_div_d,
-                (float *)grid_pressures_d, (float *)this->mappedPtr);
+                1024 * 1024, simulation.w, simulation.h, 1.0f, 1.0f,
+                1.0f, (float *)simulation.edges_view.u, (float *)simulation.edges_view.v, (float *)simulation.cells_view.divs,
+                (float *)simulation.cells_view.pressures_input, (float *)this->mappedPtr);
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -208,6 +182,11 @@ namespace CodeCuda
 
         return C_Res::OK;
     }
+    C_Res C_SetDebugSimulation(bool val)
+    {
+        simulation.debug = val;
+        return C_Res::OK;
+    }
     C_Res CodeCudaContext::C_Shutdown()
     {
         CODECUDA_PRINTLN("Shutdown: CodeCudaEngine");
@@ -216,9 +195,8 @@ namespace CodeCuda
 
         CODE_API::CW_StreamSynchronize(this->stream);
         CODE_API::CW_StreamDestroy(this->stream);
-
-        CODE_API::CW_Free(grid_pressures_d);
-        CODE_API::CW_Free(grid_div_d);
+        simulation.FreeSim();
+        
         this->stream = nullptr;
         this->device = -1;
         this->initialized = false;
@@ -267,13 +245,23 @@ namespace CodeCuda
         }
         return C_Res::OK;
     }
-    C_Res C_UpdateSim()
+    C_Res C_UpdateSimCPU()
     {
         if (!simulation.ready_to_run)
         {
             simulation.InitGrid(s_width, s_height);
         }
-        simulation.UpdateSimulation();
+        simulation.UpdateSimulationCPU();
+        return C_Res::OK;
+    }
+    
+    C_Res C_UpdateSimGPU(CodeCudaContext* code_cuda_context)
+    {
+        if (!simulation.ready_to_run)
+        {
+            simulation.InitGrid(s_width, s_height);
+        }
+        simulation.UpdateSimulationGPU(code_cuda_context->stream);
         return C_Res::OK;
     }
     C_Res C_Matmul(CodeCudaContext *code_cuda_context, const int M, const int N, const int K, const float *a,

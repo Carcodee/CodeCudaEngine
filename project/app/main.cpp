@@ -65,16 +65,17 @@ void TestMatmulShapes(CodeCuda::CodeCudaContext* context)
 }
 int main()
 {
-    // auto cuda_context = new CodeCuda::CodeCudaContext();
-    // cuda_context->C_Init();
+    auto cuda_context = new CodeCuda::CodeCudaContext();
+    cuda_context->C_Init();
     // TestMatmulShapes(cuda_context);
-    // cuda_context->C_Shutdown();
     // delete(cuda_context);
+    CodeCuda::C_SetDebugSimulation(true);
     for (int i = 0; i < 100; ++i)
     {
-        CodeCuda::C_UpdateSim();
-        CodeCuda::C_AddRandomVelocity(1);
+        // CodeCuda::C_AddRadialVelocity(0, 0, 1, 1);
+        CodeCuda::C_UpdateSimGPU(cuda_context);
     }
+    cuda_context->C_Shutdown();
     while (true)
     {
         
