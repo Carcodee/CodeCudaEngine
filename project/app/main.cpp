@@ -73,7 +73,7 @@ int main()
     for (int i = 0; i < 100; ++i)
     {
         // CodeCuda::C_AddRadialVelocity(0, 0, 1, 1);
-        CodeCuda::C_UpdateSimGPU(cuda_context);
+        CodeCuda::C_UpdateSimCPU();
     }
     cuda_context->C_Shutdown();
     while (true)

@@ -156,7 +156,7 @@ namespace CodeCuda
         this->kernel_launcher.kernel = [this](cudaStream_t stream)
         {
             // simulation.UpdateSimDeviceOnly(stream);
-            simulation.UpdateSimulationGPU(stream);
+            simulation.UpdateSimulation(stream);
             dim3 grid((1024 * 1024) / 128, 1, 1);
             dim3 block(128, 1, 1);
             // we usse pressure input since the input is always the last output because we do double buffering for

@@ -394,7 +394,7 @@ namespace CodeSimulation
             const float dx = px - 0.5f;
             const float dy = py - 0.5f;
 
-            constexpr float radius = 0.05f;
+            constexpr float radius = 0.09f;
 
             return dx * dx + dy * dy <= radius * radius;
         }
@@ -438,7 +438,7 @@ namespace CodeSimulation
                 int x = i % edges_w;
                 int y = i / edges_w;
                 is_walls_v[i] = IsWall(x, y, edges_w, edges_h);
-                v[i] = 0.001f;
+                // v[i] = 0.001f;
             }
         }
 
@@ -579,6 +579,17 @@ namespace CodeSimulation
             float br_v = other_edge_arr_in[y * edge_w + (x + 1)];
             return (tl_v + tr_v + bl_v + br_v) * 0.25f;
         }
+        
+        __global__ void k_apply_forces(int size, float density, float dx, float dt, c_cells_view cells_data,
+                                                c_edges_view edges_view)
+        {
+            uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx >= size)
+                return;
+            
+            float acc = 5.0f;
+            edges_view.u_output[idx] += acc * dt;
+        }
         __global__ void k_simulation_projection(int size, float density, float dx, float dt, c_cells_view cells_data,
                                                 c_edges_view edges_view)
         {
@@ -595,9 +606,7 @@ namespace CodeSimulation
             uint8_t s = GetCellEdgesStateCount(x, y, cells_data.w, cells_data.edges_states_count);
             if (s == 0)
             {
-                // CODECUDA_PRINTLN("solid");
                 return;
-                ;
             }
 
             int edge_u_left_out_idx = -1;
@@ -631,7 +640,7 @@ namespace CodeSimulation
             cells_data.pressures_output[idx] = pressure_new;
         }
 
-        __global__ void k_simulation_update_velocities_u(int size, float k, c_cells_view cells_data,
+        __global__ void k_simulation_update_velocities_u(int size, float dt,float k, c_cells_view cells_data,
                                                          c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -642,9 +651,10 @@ namespace CodeSimulation
             {
                 int x = idx % edges_view.edges_w;
                 int y = idx / edges_view.edges_w;
-                float press_r = GetCellPressure(x, y, cells_data.w, cells_data.pressures_output);
-                float press_l = GetCellPressure(x - 1, y, cells_data.w, cells_data.pressures_output);
+                float press_r = GetCellPressure(x, y, cells_data.w, cells_data.pressures_input);
+                float press_l = GetCellPressure(x - 1, y, cells_data.w, cells_data.pressures_input);
                 edges_view.u_output[idx] = edges_view.u_output[idx] - (k * (press_r - press_l));
+                edges_view.u_output[idx] *= 0.99;
             }
             else
             {
@@ -664,10 +674,10 @@ namespace CodeSimulation
                 int x = idx % edges_view.edges_w;
                 int y = idx / edges_view.edges_w;
 
-                float press_t = GetCellPressure(x, y, cells_data.w, cells_data.pressures_output);
-                float press_b = GetCellPressure(x, y - 1, cells_data.w, cells_data.pressures_output);
+                float press_t = GetCellPressure(x, y, cells_data.w, cells_data.pressures_input);
+                float press_b = GetCellPressure(x, y - 1, cells_data.w, cells_data.pressures_input);
                 edges_view.v_output[idx] = edges_view.v_output[idx] - (k * (press_t - press_b));
-                // edges_view.v[idx] += (dt * (gravity));
+                edges_view.v_output[idx] *= 0.99;
             }
             else
             {
@@ -726,7 +736,15 @@ namespace CodeSimulation
 
             int x = idx % cells_data.w;
             int y = idx / cells_data.w;
-
+            if (cells_data.is_walls[idx])
+            {
+                return;
+            }
+            if (x == cells_data.w - 2)
+            {
+                cells_data.smoke_output[idx] = 0.0f;
+                return;
+            }
             int l = -1;
             int r = -1;
             int b = -1;
@@ -740,6 +758,7 @@ namespace CodeSimulation
             float y_pos = pos[1] - v * dt / dy;
             cells_data.smoke_output[idx] =
                 SampleQuantity(x_pos, y_pos, cells_data.w, cells_data.h, cells_data.smoke_input);
+
         }
         __global__ void k_simulation_add_velocity(int size, int x_pos, int y_pos, int radius, float vel_x, float vel_y,
                                                   c_edges_view edges_view)
@@ -848,28 +867,70 @@ namespace CodeSimulation
                 {
                     continue;
                 }
-
+            
                 int x = i % w;
                 int y = i / w;
-
+            
                 int u_left;
                 int u_right;
                 int v_top;
                 int v_bottom;
 
                 GetCellEdgesIdxs(x, y, u_left, u_right, v_top, v_bottom);
-
+                if (x == 0)
+                {
+                    edges_data.u[u_left] = -1.0f;
+                    continue;
+                }
+                if (x == w - 1)
+                {
+                    edges_data.u[u_right] = 1.0f;
+                    continue;
+                }
+                if (y == 0)
+                {
+                    edges_data.v[v_bottom] = -1.0f;
+                    continue;
+                }
+                if (y == h - 1)
+                {
+                    edges_data.v[v_top] = 1.0f;
+                    continue;
+                }
+                
                 edges_data.is_walls_u[u_left] = 1;
                 edges_data.is_walls_u[u_right] = 1;
                 edges_data.is_walls_v[v_top] = 1;
                 edges_data.is_walls_v[v_bottom] = 1;
-
+                
                 edges_data.u[u_left] = 0.0f;
                 edges_data.u[u_right] = 0.0f;
                 edges_data.v[v_top] = 0.0f;
                 edges_data.v[v_bottom] = 0.0f;
             }
-
+            
+            // // Open right outlet before calculating states.
+            // for (int y = 1; y < h - 1; ++y)
+            // {
+            //     const int outletu_e = y * edge_w + (w - 1);
+            //     const int outletu_b = y * edge_w + 1;
+            //     edges_data.is_walls_u[outletu_e] = 0;
+            //     edges_data.u[outletu_e] = 1.0f;
+            //     
+            //     edges_data.is_walls_u[outletu_b] = 0;
+            //     edges_data.u[outletu_b] = 1.0f;
+            // }
+            //
+            // for (int x = 1; x < h - 1; ++x)
+            // {
+            //     const int outletu_e = 0 * edge_w + x;
+            //     const int outletu_b = (edge_h - 2) * x;
+            //     edges_data.is_walls_v[outletu_e] = 0;
+            //     edges_data.v[outletu_e] = 1.0f;
+            //     
+            //     edges_data.is_walls_v[outletu_b] = 0;
+            //     edges_data.v[outletu_b] = 1.0f;
+            // }
             // Second pass: calculate counts after every wall is known.
             for (int i = 0; i < cells_data.pressures.size(); ++i)
             {
@@ -1017,6 +1078,13 @@ namespace CodeSimulation
             InitGrid(w, h);
         }
 
+        void ApplyForcesGPU(cudaStream_t stream)
+        {
+            dim3 block(1024, 1, 1);
+            dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
+            CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(w * h, density, dx, dt,
+                                                                                      cells_view, edges_view);
+        }
         void ProjectionGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
@@ -1025,10 +1093,7 @@ namespace CodeSimulation
             {
                 CodeSimulationDevice::k_simulation_projection<<<grid, block, 0, stream>>>(w * h, density, dx, dt,
                                                                                           cells_view, edges_view);
-                if (iter < total_iter_gpu - 1)
-                {
-                    std::swap(cells_view.pressures_input, cells_view.pressures_output);
-                }
+                std::swap(cells_view.pressures_input, cells_view.pressures_output);
             }
         }
         void UpdateSimulation(cudaStream_t stream = nullptr)
@@ -1045,15 +1110,15 @@ namespace CodeSimulation
         void UpdateSimulationGPU(cudaStream_t stream)
         {
             AdvectVelocityGPU(stream);
+            ApplyForcesGPU(stream);
             ProjectionGPU(stream);
             UpdateVelocityGPU(stream);
             if (debug)
             {
-                CopyDeviceToHost(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
+                CopyDeviceToHost(cells_view.pressures_input, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
                 ProjectionResults(total_iter_gpu);
             }
-            // CODE_API::CW_StreamSynchronize(stream);
             UpdateData();
         }
 
@@ -1061,15 +1126,33 @@ namespace CodeSimulation
         void UpdateSimulationCPU()
         {
             AdvectVelocity();
+            ApplyForces();
             Projection();
+            UpdateVelocity();
             if (debug)
             {
                 ProjectionResults(total_iter_cpu);
             }
-            UpdateVelocity();
+            CopyHostToDevice(cells_view.pressures_input, cells_view.smoke_output, edges_view.u_output, edges_view.v_output);
             UpdateData();
         }
+        void ApplyForces()
+        {
+            const float acceleration = 0.0f;
 
+            for (int y = 0; y < edge_h; ++y)
+            {
+                for (int x = 0; x < edge_w; ++x)
+                {
+                    if (edges_data.GetWallU(x, y))
+                    {
+                        continue;
+                    }
+
+                    edges_data.GetU(x, y) += acceleration * dt;
+                }
+            }
+        }
         
         void AddRadialVelocity(int x_pos, int y_pos, int radius, float scale)
         {
@@ -1269,6 +1352,7 @@ namespace CodeSimulation
 
         float GetUFromV(int x, int y, float v, std::vector<float> &u_edges_old)
         {
+            // int x_1 = std::clamp(x, 0, edge_w - 1);
             float tl_u = u_edges_old[(y + 1) * edge_w + x];
             float tr_u = u_edges_old[(y + 1) * edge_w + (x + 1)];
             float bl_u = u_edges_old[y * edge_w + x];
@@ -1378,6 +1462,11 @@ namespace CodeSimulation
                     float x_pos = pos[0] - u * dt / dx;
                     float y_pos = pos[1] - v * dt / dy;
                     cells_data.smoke[i] = SampleSmoke(x_pos, y_pos, cells_data.w, cells_data.h, smoke_cells_old);
+                    if (x == w - 2)
+                    { 
+                        //kill smoke
+                        cells_data.smoke[i] = 0.0f;
+                    }
                 }
             }
         }
@@ -1413,7 +1502,7 @@ namespace CodeSimulation
             dim3 block(1024, 1, 1);
             dim3 grid((double(edge_w * edge_h) + 1023.0) / 1024.0, 1, 1);
             float k = dt / (density * dx);
-            CodeSimulationDevice::k_simulation_update_velocities_u<<<grid, block, 0, stream>>>(edge_w * edge_h, k,
+            CodeSimulationDevice::k_simulation_update_velocities_u<<<grid, block, 0, stream>>>(edge_w * edge_h, dt, k,
                                                                                                cells_view, edges_view);
             k = dt / (density * dy);
             CodeSimulationDevice::k_simulation_update_velocities_v<<<grid, block, 0, stream>>>(
@@ -1429,7 +1518,7 @@ namespace CodeSimulation
                 {
                     if (edges_data.GetWallU(x, y))
                     {
-                        edges_data.u[y * edge_w + x] = 0.0f;
+                        edges_data.GetU(x, y) = 0.0f;
                         continue;
                     }
 
@@ -1445,23 +1534,15 @@ namespace CodeSimulation
                 {
                     if (edges_data.GetWallV(x, y))
                     {
-                        edges_data.v[y * edge_w + x] = 0.0f;
+                        // edges_data.v[y * edge_w + x] = 0.0f;
                         continue;
                     }
                     float press_t = cells_data.GetCellPressure(x, y);
                     float press_b = cells_data.GetCellPressure(x, y - 1);
                     edges_data.v[y * edge_w + x] = edges_data.v[y * edge_w + x] - (k * (press_t - press_b));
+                    // edges_data.v[y * edge_w + x] *= 0.99;
                 }
             }
-            // for (int i = 0; i < v_edges.size(); ++i)
-            // {
-            //     if (v_edges[i].is_wall)
-            //     {
-            //         v_edges[i].vec = 0.0f;
-            //         continue;
-            //     }
-            //     v_edges[i].vec += (dt * (gravity));
-            // }
         }
 
         void Projection()
@@ -1470,12 +1551,13 @@ namespace CodeSimulation
             {
                 for (int i = 0; i < cells_data.pressures.size(); ++i)
                 {
+                    
+                    int x = i % w;
+                    int y = i / w;
                     if (cells_data.is_walls[i] == 1)
                     {
                         continue;
                     }
-                    int x = i % w;
-                    int y = i / w;
                     int s = cells_data.GetCellEdgesStateCount(x, y);
                     if (s == 0)
                     {
@@ -1487,22 +1569,22 @@ namespace CodeSimulation
                     int edge_u_right_out_idx = -1;
                     int edge_v_top_out_idx = -1;
                     int edge_v_bottom_out_idx = -1;
+                    
+                    GetCellEdgesIdxs(x, y, edge_u_left_out_idx, edge_u_right_out_idx, edge_v_top_out_idx,
+                                     edge_v_bottom_out_idx);
                     float press_l = cells_data.GetCellPressure(x - 1, y) * cells_data.GetCellFluidState(x - 1, y);
                     float press_r = cells_data.GetCellPressure(x + 1, y) * cells_data.GetCellFluidState(x + 1, y);
                     float press_t = cells_data.GetCellPressure(x, y + 1) * cells_data.GetCellFluidState(x, y + 1);
                     float press_b = cells_data.GetCellPressure(x, y - 1) * cells_data.GetCellFluidState(x, y - 1);
 
-                    GetCellEdgesIdxs(x, y, edge_u_left_out_idx, edge_u_right_out_idx, edge_v_top_out_idx,
-                                     edge_v_bottom_out_idx);
-
                     float press_sum = (press_l + press_r + press_t + press_b);
+                    
                     float u_r = edges_data.GetU(x + 1, y) * edges_data.GetStateU(x + 1, y);
                     float u_l = edges_data.GetU(x, y) * edges_data.GetStateU(x, y);
                     float v_t = edges_data.GetV(x, y + 1) * edges_data.GetStateV(x, y + 1);
                     float v_b = edges_data.GetV(x, y) * edges_data.GetStateV(x, y);
 
                     float velocities_sum = u_r - u_l + v_t - v_b;
-                    float pressure_old = cells_data.pressures[i];
                     float pressure_new = (press_sum / float(s)) - (density * dx * velocities_sum) / (float(s) * dt);
                     cells_data.pressures[i] = pressure_new;
                 }
@@ -1534,7 +1616,7 @@ namespace CodeSimulation
 
                 const float v_b = edges_data.GetV(x, y) * edges_data.GetStateV(x, y);
 
-                cells_data.divs[i] = Overrelaxation(u_r - u_l + v_t - v_b);
+                cells_data.divs[i] = u_r - u_l + v_t - v_b;
 
                 if (std::abs(cells_data.divs[i]) < epsilon)
                 {
@@ -1665,47 +1747,6 @@ namespace CodeSimulation
                       << '\n';
         }
 
-        bool IsSolidCell(int x, int y) const
-        {
-            if (x == 0 || x == w - 1 || y == 0 || y == h - 1)
-            {
-                return true;
-            }
-
-            const float px = (float(x) + 0.5f) / float(w);
-            const float py = (float(y) + 0.5f) / float(h);
-
-            const float dx = px - 0.5f;
-            const float dy = py - 0.5f;
-
-            constexpr float radius = 0.05f;
-
-            return dx * dx + dy * dy <= radius * radius;
-        }
-        bool IsWall(int x, int y, int gridWidth, int gridHeight) const
-        {
-            // Outer domain boundary
-            if (x == 0 || x == gridWidth - 1 || y == 0 || y == gridHeight - 1)
-            {
-                return true;
-            }
-            return false;
-
-            // // Convert the integer coordinate to normalized [0, 1] space.
-            // const float normalizedX = float(x) / float(gridWidth - 1);
-            // const float normalizedY = float(y) / float(gridHeight - 1);
-            //
-            // const float centerX = 0.5f;
-            // const float centerY = 0.5f;
-            //
-            // // Radius relative to the domain size.
-            // const float radius = 0.15f;
-            //
-            // const float offsetX = normalizedX - centerX;
-            // const float offsetY = normalizedY - centerY;
-            //
-            // return offsetX * offsetX + offsetY * offsetY <= radius * radius;
-        }
         const float epsilon = 0.0001f;
         float dt = 1.0f / 60.0f;
         float g = 9.8f;
@@ -1723,15 +1764,13 @@ namespace CodeSimulation
         c_cells cells_data = {};
         c_edges edges_data = {};
         int gravity_sign = 1;
-        float density = 1.0;
+        float density = 1.0f;
         int64_t sim_step_idx = 0;
         float total_t = 0.0f;
         float weight_sor = 1.6f;
-        int total_iter_gpu = 3250;
-        int total_iter_cpu = 12;
+        int total_iter_gpu = 350;
+        int total_iter_cpu = 60;
         bool debug = false;
-        int smoke_queued = 0;
-        int vel_queued = 0;
         bool gpu_sim = true;
     };
 
