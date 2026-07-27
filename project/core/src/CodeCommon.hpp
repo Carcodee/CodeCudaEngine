@@ -438,7 +438,7 @@ namespace CodeSimulation
                 int x = i % edges_w;
                 int y = i / edges_w;
                 is_walls_v[i] = IsWall(x, y, edges_w, edges_h);
-                // v[i] = 0.001f;
+                v[i] = 0.001f;
             }
         }
 
@@ -580,15 +580,16 @@ namespace CodeSimulation
             return (tl_v + tr_v + bl_v + br_v) * 0.25f;
         }
         
-        __global__ void k_apply_forces(int size, float density, float dx, float dt, c_cells_view cells_data,
+        __global__ void k_apply_forces(int size, float wind ,float g,float density, float dx, float dt, c_cells_view cells_data,
                                                 c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
             
-            float acc = 5.0f;
+            float acc = wind;
             edges_view.u_output[idx] += acc * dt;
+            edges_view.v_output[idx] += g * dt;
         }
         __global__ void k_simulation_projection(int size, float density, float dx, float dt, c_cells_view cells_data,
                                                 c_edges_view edges_view)
@@ -1082,7 +1083,7 @@ namespace CodeSimulation
         {
             dim3 block(1024, 1, 1);
             dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
-            CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(w * h, density, dx, dt,
+            CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(w * h, wind_speed, g,density, dx, dt,
                                                                                       cells_view, edges_view);
         }
         void ProjectionGPU(cudaStream_t stream)
@@ -1138,7 +1139,7 @@ namespace CodeSimulation
         }
         void ApplyForces()
         {
-            const float acceleration = 0.0f;
+            const float acceleration = wind_speed;
 
             for (int y = 0; y < edge_h; ++y)
             {
@@ -1510,7 +1511,6 @@ namespace CodeSimulation
         }
         void UpdateVelocity()
         {
-            float gravity = (g * gravity_sign);
             float k = dt / (density * dx);
             for (int y = 0; y < edge_h; ++y)
             {
@@ -1525,6 +1525,7 @@ namespace CodeSimulation
                     float press_r = cells_data.GetCellPressure(x, y);
                     float press_l = cells_data.GetCellPressure(x - 1, y);
                     edges_data.u[y * edge_w + x] = edges_data.u[y * edge_w + x] - (k * (press_r - press_l));
+                    edges_data.u[y * edge_w + x] *= 0.99;
                 }
             }
             k = dt / (density * dy);
@@ -1540,7 +1541,7 @@ namespace CodeSimulation
                     float press_t = cells_data.GetCellPressure(x, y);
                     float press_b = cells_data.GetCellPressure(x, y - 1);
                     edges_data.v[y * edge_w + x] = edges_data.v[y * edge_w + x] - (k * (press_t - press_b));
-                    // edges_data.v[y * edge_w + x] *= 0.99;
+                    edges_data.v[y * edge_w + x] *= 0.99;
                 }
             }
         }
@@ -1748,8 +1749,6 @@ namespace CodeSimulation
         }
 
         const float epsilon = 0.0001f;
-        float dt = 1.0f / 60.0f;
-        float g = 9.8f;
         float dx = 0.0f;
         float dy = 0.0f;
 
@@ -1763,13 +1762,15 @@ namespace CodeSimulation
         c_edges_view edges_view = {};
         c_cells cells_data = {};
         c_edges edges_data = {};
-        int gravity_sign = 1;
         float density = 1.0f;
         int64_t sim_step_idx = 0;
         float total_t = 0.0f;
         float weight_sor = 1.6f;
-        int total_iter_gpu = 350;
+        int total_iter_gpu = 850;
+        float dt = 1.0f / 90.0f;
         int total_iter_cpu = 60;
+        float g = -0.0f;
+        float wind_speed = 3.0f;
         bool debug = false;
         bool gpu_sim = true;
     };
