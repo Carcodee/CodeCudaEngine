@@ -675,10 +675,11 @@ namespace code_kernels
                 auto wx = pos_float.x - floor(pos_float.x);
                 auto wy = pos_float.y - floor(pos_float.y);
 
-                auto tl = int2(pos_float.x, pos_float.y);
-                auto tr = int2(ceil(pos_float.x), pos_float.y);
                 auto bl = int2(pos_float.x, ceil(pos_float.y));
                 auto br = int2(ceil(pos_float.x), ceil(pos_float.y));
+                auto tl = int2(pos_float.x, pos_float.y);
+                auto tr = int2(ceil(pos_float.x), pos_float.y);
+
 
                 float val_tl = grid_smoke[tl.y * sim_w + tl.x];
                 float val_tr = grid_smoke[tr.y * sim_w + tr.x];
