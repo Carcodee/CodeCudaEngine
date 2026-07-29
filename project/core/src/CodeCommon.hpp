@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "assert.h"
+#include "CodeSimulationParams.hpp"
 #include "common/Logger.hpp"
 
 namespace CodeCommon
@@ -203,7 +204,6 @@ struct k_auto_tunning_params
     static constexpr uint32_t WTCOLS = WSUBN / TN;
     static constexpr uint32_t WTROWS = WSIZE / WTCOLS;
 };
-
 namespace CodeBenchmarking
 {
 
@@ -314,13 +314,13 @@ namespace CodeBenchmarking
 } // namespace CodeBenchmarking
 namespace CodeSimulation
 {
-
-
+    using namespace code_math;
+    using sim_params = CodeCuda::sim_params;
     struct c_cells
     {
         std::vector<float> divs;
         std::vector<float> pressures;
-        std::vector<float> smoke;
+        std::vector<vec3> smoke;
         std::vector<uint8_t> is_walls;
         std::vector<uint8_t> edges_states_count;
         int valid_cell_count = 0;
@@ -338,6 +338,14 @@ namespace CodeSimulation
             edges_states_count.resize(w * h);
             valid_cell_count = 0;
 
+            // for (int i = 0; i < smoke.size(); ++i)
+            // {
+            //     float rx = float(rand() % 1000) / 1000.0f;
+            //     float ry = float(rand() % 1000) / 1000.0f;
+            //     float rz = float(rand() % 1000) / 1000.0f;
+            //     smoke[i] = vec3(rx, ry, rz);
+            //     
+            // }
             for (int i = 0; i < is_walls.size(); ++i)
             {
                 int x = i % w;
@@ -466,8 +474,8 @@ namespace CodeSimulation
     {
 
         float *divs = nullptr;
-        float *smoke_input = nullptr;
-        float *smoke_output = nullptr;
+        vec3 *smoke_input = nullptr;
+        vec3 *smoke_output = nullptr;
         float *pressures_input = nullptr;
         float *pressures_output = nullptr;
         uint8_t *is_walls = nullptr;
@@ -553,23 +561,24 @@ namespace CodeSimulation
             return top * (wy) + bot * (1.0f - wy);
         }
 
-        __device__ float SampleQuantity(float x, float y, int cells_w, int cells_h, float *cell_quantity)
+        template <typename T>
+        __device__ T SampleQuantity(float x, float y, int cells_w, int cells_h, const T *cell_quantity)
         {
 
             x = clamp(x, 0.0f, float(cells_w - 2));
             y = clamp(y, 0.0f, float(cells_h - 2));
-            float tl_u_prev = cell_quantity[int(y + 1) * cells_w + int(x)];
-            float tr_u_prev = cell_quantity[int(y + 1) * cells_w + (int(x) + 1)];
-            float bl_u_prev = cell_quantity[(int(y)) * cells_w + int(x)];
-            float br_u_prev = cell_quantity[(int(y)) * cells_w + (int(x) + 1)];
+            const T tl_u_prev = cell_quantity[int(y + 1) * cells_w + int(x)];
+            const T tr_u_prev = cell_quantity[int(y + 1) * cells_w + (int(x) + 1)];
+            const T bl_u_prev = cell_quantity[int(y) * cells_w + int(x)];
+            const T br_u_prev = cell_quantity[int(y) * cells_w + (int(x) + 1)];
 
             float wx = x - floor(x);
             float wy = y - floor(y);
 
-            float top = tl_u_prev * (1.0f - wx) + tr_u_prev * (wx);
-            float bot = bl_u_prev * (1.0f - wx) + br_u_prev * (wx);
+            const T top = tl_u_prev * (1.0f - wx) + tr_u_prev * wx;
+            const T bottom = bl_u_prev * (1.0f - wx) + br_u_prev * wx;
 
-            return top * (wy) + bot * (1.0f - wy);
+            return top * wy + bottom * (1.0f - wy);
         }
         __device__ float GetVelocity(int x, int y, int edge_w, float *other_edge_arr_in)
         {
@@ -605,6 +614,63 @@ namespace CodeSimulation
                 {
                     edges_view.v_output[idx] += g * dt;
                 }
+            }
+        }
+
+        __global__ void k_diffuse(int size, float viscosity, float dt, c_cells_view cells_data, c_edges_view edges_view)
+        {
+            uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx >= size)
+                return;
+
+            int x = idx % edges_view.edges_w;
+            int y = idx / edges_view.edges_w;
+
+            float v = viscosity;
+            // if (x < 125)
+            // {
+            //     v = 1.0f;
+            // }
+            // if (x > 125 && x < 456)
+            // {
+            //     v = 50.0f;
+            // }
+            //
+            // if (x > 456 && x < edges_view.edges_w)
+            // {
+            //     v = 0.1f;
+            // }
+            float a = v * dt;
+            float denom = 1 + 4 * a;
+            if (edges_view.is_walls_u[idx] == 0)
+            {
+                float l = GetEdge(x - 1, y, edges_view.edges_w, edges_view.u_output) *
+                    GetEdgeState(x - 1, y, edges_view.edges_w, edges_view.is_walls_u);
+                float r = GetEdge(x + 1, y, edges_view.edges_w, edges_view.u_output) *
+                    GetEdgeState(x + 1, y, edges_view.edges_w, edges_view.is_walls_u);
+                float b = GetEdge(x, y - 1, edges_view.edges_w, edges_view.u_output) *
+                    GetEdgeState(x, y - 1, edges_view.edges_w, edges_view.is_walls_u);
+                float t = GetEdge(x, y + 1, edges_view.edges_w, edges_view.u_output) *
+                    GetEdgeState(x, y + 1, edges_view.edges_w, edges_view.is_walls_u);
+
+                float neightbours_sum = l + r + t + b;
+                float u = (neightbours_sum)*a + edges_view.u_output[idx];
+                edges_view.u_input[idx] = u / denom;
+            }
+            if (edges_view.is_walls_v[idx] == 0)
+            {
+                float l = GetEdge(x - 1, y, edges_view.edges_w, edges_view.v_output) *
+                    GetEdgeState(x - 1, y, edges_view.edges_w, edges_view.is_walls_v);
+                float r = GetEdge(x + 1, y, edges_view.edges_w, edges_view.v_output) *
+                    GetEdgeState(x + 1, y, edges_view.edges_w, edges_view.is_walls_v);
+                float b = GetEdge(x, y - 1, edges_view.edges_w, edges_view.v_output) *
+                    GetEdgeState(x, y - 1, edges_view.edges_w, edges_view.is_walls_v);
+                float t = GetEdge(x, y + 1, edges_view.edges_w, edges_view.v_output) *
+                    GetEdgeState(x, y + 1, edges_view.edges_w, edges_view.is_walls_v);
+
+                float neightbours_sum = l + r + t + b;
+                float u = (neightbours_sum)*a + edges_view.v_output[idx];
+                edges_view.v_input[idx] = u / denom;
             }
         }
         __global__ void k_simulation_projection(int size, float density, float dx, float dt, c_cells_view cells_data,
@@ -761,7 +827,7 @@ namespace CodeSimulation
             }
             if (x == cells_data.w - 2)
             {
-                cells_data.smoke_output[idx] = 0.0f;
+                cells_data.smoke_output[idx] = {0.0f, 0.0f, 0.0f};
                 return;
             }
             int l = -1;
@@ -821,7 +887,7 @@ namespace CodeSimulation
             edges_view.v_output[edge_idx] += vel_y;
         }
 
-        __global__ void k_simulation_add_smoke(int size, int x_pos, int y_pos, int radius, float value,
+        __global__ void k_simulation_add_smoke(int size, int x_pos, int y_pos, int radius, vec3 value,
                                                c_cells_view cells_view)
         {
             const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -927,29 +993,6 @@ namespace CodeSimulation
                 edges_data.v[v_bottom] = 0.0f;
             }
 
-            // // Open right outlet before calculating states.
-            // for (int y = 1; y < h - 1; ++y)
-            // {
-            //     const int outletu_e = y * edge_w + (w - 1);
-            //     const int outletu_b = y * edge_w + 1;
-            //     edges_data.is_walls_u[outletu_e] = 0;
-            //     edges_data.u[outletu_e] = 1.0f;
-            //
-            //     edges_data.is_walls_u[outletu_b] = 0;
-            //     edges_data.u[outletu_b] = 1.0f;
-            // }
-            //
-            // for (int x = 1; x < h - 1; ++x)
-            // {
-            //     const int outletu_e = 0 * edge_w + x;
-            //     const int outletu_b = (edge_h - 2) * x;
-            //     edges_data.is_walls_v[outletu_e] = 0;
-            //     edges_data.v[outletu_e] = 1.0f;
-            //
-            //     edges_data.is_walls_v[outletu_b] = 0;
-            //     edges_data.v[outletu_b] = 1.0f;
-            // }
-            // Second pass: calculate counts after every wall is known.
             for (int i = 0; i < cells_data.pressures.size(); ++i)
             {
                 int x = i % w;
@@ -970,8 +1013,8 @@ namespace CodeSimulation
             cells_view.w = w;
             cells_view.h = h;
             CODE_API::CW_Malloc(&cells_view.divs, sizeof(float) * cell_count);
-            CODE_API::CW_Malloc(&cells_view.smoke_input, sizeof(float) * cell_count);
-            CODE_API::CW_Malloc(&cells_view.smoke_output, sizeof(float) * cell_count);
+            CODE_API::CW_Malloc(&cells_view.smoke_input, sizeof(vec3) * cell_count);
+            CODE_API::CW_Malloc(&cells_view.smoke_output, sizeof(vec3) * cell_count);
             CODE_API::CW_Malloc(&cells_view.pressures_input, sizeof(float) * cell_count);
             CODE_API::CW_Malloc(&cells_view.pressures_output, sizeof(float) * cell_count);
             CODE_API::CW_Malloc(&cells_view.is_walls, sizeof(uint8_t) * cell_count);
@@ -989,9 +1032,9 @@ namespace CodeSimulation
 
             CODE_API::CW_Memcpy(cells_view.divs, cells_data.divs.data(), sizeof(float) * cell_count,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(cells_view.smoke_input, cells_data.smoke.data(), sizeof(float) * cell_count,
+            CODE_API::CW_Memcpy(cells_view.smoke_input, cells_data.smoke.data(), sizeof(vec3) * cell_count,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(cells_view.smoke_output, cells_data.smoke.data(), sizeof(float) * cell_count,
+            CODE_API::CW_Memcpy(cells_view.smoke_output, cells_data.smoke.data(), sizeof(vec3) * cell_count,
                                 cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(cells_view.pressures_input, cells_data.pressures.data(), sizeof(float) * cell_count,
                                 cudaMemcpyHostToDevice);
@@ -1015,7 +1058,7 @@ namespace CodeSimulation
             CODE_API::CW_Memcpy(edges_view.is_walls_v, edges_data.is_walls_v.data(), sizeof(uint8_t) * edge_count,
                                 cudaMemcpyHostToDevice);
         }
-        void CopyHostToDevice(float *current_pressure, float *smoke, float *u, float *v)
+        void CopyHostToDevice(float *current_pressure, vec3 *smoke, float *u, float *v)
         {
 
             int cell_count = w * h;
@@ -1034,12 +1077,12 @@ namespace CodeSimulation
 
             CODE_API::CW_Memcpy(current_pressure, cells_data.pressures.data(), sizeof(float) * cell_count,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(smoke, cells_data.smoke.data(), sizeof(float) * cell_count, cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(smoke, cells_data.smoke.data(), sizeof(vec3) * cell_count, cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(u, edges_data.u.data(), sizeof(float) * edge_count, cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(v, edges_data.v.data(), sizeof(float) * edge_count, cudaMemcpyHostToDevice);
         }
 
-        void CopyDeviceToHost(float *current_pressure, float *smoke, float *u, float *v)
+        void CopyDeviceToHost(float *current_pressure, vec3 *smoke, float *u, float *v)
         {
             int cell_count = w * h;
             int edge_count = edge_w * edge_h;
@@ -1058,7 +1101,7 @@ namespace CodeSimulation
 
             CODE_API::CW_Memcpy(cells_data.pressures.data(), current_pressure, sizeof(float) * cell_count,
                                 cudaMemcpyDeviceToHost);
-            CODE_API::CW_Memcpy(cells_data.smoke.data(), smoke, sizeof(float) * cell_count, cudaMemcpyDeviceToHost);
+            CODE_API::CW_Memcpy(cells_data.smoke.data(), smoke, sizeof(vec3) * cell_count, cudaMemcpyDeviceToHost);
             CODE_API::CW_Memcpy(edges_data.u.data(), u, sizeof(float) * edge_count, cudaMemcpyDeviceToHost);
             CODE_API::CW_Memcpy(edges_data.v.data(), v, sizeof(float) * edge_count, cudaMemcpyDeviceToHost);
         }
@@ -1088,6 +1131,17 @@ namespace CodeSimulation
             ready_to_run = false;
         }
 
+        void UpdateSimulation(cudaStream_t stream = nullptr)
+        {
+            if (params.gpu_sim)
+            {
+                UpdateSimulationGPU(stream);
+            }
+            else
+            {
+                UpdateSimulationCPU();
+            }
+        }
         void RestartSim()
         {
             assert(w > 0);
@@ -1100,42 +1154,47 @@ namespace CodeSimulation
         {
             dim3 block(1024, 1, 1);
             dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
-            CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(w * h, wind_speed, g, density, dx, dt,
+            CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(w * h, params.wind_speed, params.g, params.density, dx, params.dt,
                                                                              cells_view, edges_view);
         }
-        void ProjectionGPU(cudaStream_t stream)
+        void DiffuseGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
             dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
-            for (int iter = 0; iter < total_iter_gpu; ++iter)
+            for (int i = 0; i < 650; ++i)
             {
-                CodeSimulationDevice::k_simulation_projection<<<grid, block, 0, stream>>>(w * h, density, dx, dt,
+                CodeSimulationDevice::k_diffuse<<<grid, block, 0, stream>>>(edge_h * edge_w, params.viscosity, params.dt, cells_view,
+                                                                            edges_view);
+                std::swap(edges_view.u_input, edges_view.u_output);
+                std::swap(edges_view.v_input, edges_view.v_output);
+            }
+
+            // edges input have the final output
+        }
+        void ProjectionGPU(cudaStream_t stream)
+        {
+            // edges input have the final output
+            dim3 block(1024, 1, 1);
+            dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
+            for (int iter = 0; iter < params.total_iter_gpu; ++iter)
+            {
+                CodeSimulationDevice::k_simulation_projection<<<grid, block, 0, stream>>>(w * h, params.density, dx, params.dt,
                                                                                           cells_view, edges_view);
                 std::swap(cells_view.pressures_input, cells_view.pressures_output);
-            }
-        }
-        void UpdateSimulation(cudaStream_t stream = nullptr)
-        {
-            if (gpu_sim)
-            {
-                UpdateSimulationGPU(stream);
-            }
-            else
-            {
-                UpdateSimulationCPU();
             }
         }
         void UpdateSimulationGPU(cudaStream_t stream)
         {
             AdvectVelocityGPU(stream);
             ApplyForcesGPU(stream);
+            DiffuseGPU(stream);
             ProjectionGPU(stream);
             UpdateVelocityGPU(stream);
-            if (debug)
+            if (params.debug)
             {
                 CopyDeviceToHost(cells_view.pressures_input, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
-                ProjectionResults(total_iter_gpu);
+                ProjectionResults(params.total_iter_gpu);
             }
             UpdateData();
         }
@@ -1148,9 +1207,9 @@ namespace CodeSimulation
             Diffuse();
             Projection();
             UpdateVelocity();
-            if (debug)
+            if (params.debug)
             {
-                ProjectionResults(total_iter_cpu);
+                ProjectionResults(params.total_iter_cpu);
             }
             CopyHostToDevice(cells_view.pressures_input, cells_view.smoke_output, edges_view.u_output,
                              edges_view.v_output);
@@ -1158,9 +1217,9 @@ namespace CodeSimulation
         }
         void Diffuse()
         {
-            float a = viscosity * dt;
+            float a = params.viscosity * params.dt;
             float denom = 1 + 4 * a;
-            for (int i = 0; i < total_iter_cpu; ++i)
+            for (int i = 0; i < params.total_iter_cpu; ++i)
             {
                 for (int y = 0; y < edge_h; ++y)
                 {
@@ -1168,7 +1227,7 @@ namespace CodeSimulation
                     {
                         if (edges_data.GetWallU(x, y) == 0)
                         {
-                            
+
                             float c = edges_data.GetU(y, x);
                             float l = edges_data.GetU(x - 1, y) * edges_data.GetStateU(x - 1, y);
                             float r = edges_data.GetU(x + 1, y) * edges_data.GetStateU(x + 1, y);
@@ -1176,12 +1235,12 @@ namespace CodeSimulation
                             float t = edges_data.GetU(x, y + 1) * edges_data.GetStateU(x, y + 1);
 
                             float neightbours_sum = l + r + t + b;
-                            float u = (neightbours_sum) * a + edges_data.GetU(x, y);
+                            float u = (neightbours_sum)*a + edges_data.GetU(x, y);
                             edges_data.GetU(x, y) = u / denom;
                         }
                         if (edges_data.GetWallV(x, y) == 0)
                         {
-                            
+
                             float c = edges_data.GetV(y, x);
                             float l = edges_data.GetV(x - 1, y) * edges_data.GetStateV(x - 1, y);
                             float r = edges_data.GetV(x + 1, y) * edges_data.GetStateV(x + 1, y);
@@ -1189,10 +1248,9 @@ namespace CodeSimulation
                             float t = edges_data.GetV(x, y + 1) * edges_data.GetStateV(x, y + 1);
 
                             float neightbours_sum = l + r + t + b;
-                            float v = (neightbours_sum) * a + edges_data.GetV(x, y);
+                            float v = (neightbours_sum)*a + edges_data.GetV(x, y);
                             edges_data.GetV(x, y) = v / denom;
                         }
-
                     }
                 }
             }
@@ -1200,7 +1258,7 @@ namespace CodeSimulation
 
         void ApplyForces()
         {
-            const float acceleration = wind_speed;
+            const float acceleration = params.wind_speed;
 
             for (int y = 0; y < edge_h; ++y)
             {
@@ -1211,7 +1269,7 @@ namespace CodeSimulation
                         continue;
                     }
 
-                    edges_data.GetU(x, y) += acceleration * dt;
+                    edges_data.GetU(x, y) += acceleration * params.dt;
                 }
             }
         }
@@ -1224,7 +1282,7 @@ namespace CodeSimulation
                 return;
             }
 
-            if (gpu_sim)
+            if (params.gpu_sim)
             {
                 CopyDeviceToHost(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
@@ -1270,21 +1328,21 @@ namespace CodeSimulation
                 }
             }
 
-            if (gpu_sim)
+            if (params.gpu_sim)
             {
                 CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
             }
         }
 
-        void AddSmoke(int x_pos, int y_pos, int radius, float value)
+        void AddSmoke(int x_pos, int y_pos, int radius, vec3 value)
         {
             if (x_pos < 0 || x_pos >= w || y_pos < 0 || y_pos >= h)
             {
                 CODECUDA_PRINTLN("Invalid x,y pos");
                 return;
             }
-            if (gpu_sim)
+            if (params.gpu_sim)
             {
                 CopyDeviceToHost(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
@@ -1312,7 +1370,7 @@ namespace CodeSimulation
                     cells_data.smoke[idx] += value;
                 }
             }
-            if (gpu_sim)
+            if (params.gpu_sim)
             {
                 CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
@@ -1326,7 +1384,7 @@ namespace CodeSimulation
                 return;
             }
 
-            if (gpu_sim)
+            if (params.gpu_sim)
             {
                 CopyDeviceToHost(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
@@ -1361,7 +1419,7 @@ namespace CodeSimulation
                 }
             }
 
-            if (gpu_sim)
+            if (params.gpu_sim)
             {
                 CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
@@ -1387,7 +1445,7 @@ namespace CodeSimulation
                                                                                         vel_x, vel_y, edges_view);
         }
 
-        void AddSmokeGPU(int x_pos, int y_pos, int radius, float value, cudaStream_t stream)
+        void AddSmokeGPU(int x_pos, int y_pos, int radius, vec3 value, cudaStream_t stream)
         {
             if (x_pos < 0 || x_pos >= w || y_pos < 0 || y_pos >= h || radius <= 0)
             {
@@ -1429,23 +1487,22 @@ namespace CodeSimulation
             return u;
         }
 
-        float SampleSmoke(float x, float y, int cells_w, int cells_h, std::vector<float> &smoke_cells)
+        vec3 SampleSmoke(float x, float y, int cells_w, int cells_h, const std::vector<vec3> &smoke_cells)
         {
 
             x = std::clamp(x, 0.0f, float(cells_w - 2));
             y = std::clamp(y, 0.0f, float(cells_h - 2));
-            float tl_u_prev = smoke_cells[int(y + 1) * cells_w + int(x)];
-            float tr_u_prev = smoke_cells[int(y + 1) * cells_w + (int(x) + 1)];
-            float bl_u_prev = smoke_cells[(int(y)) * cells_w + int(x)];
-            float br_u_prev = smoke_cells[(int(y)) * cells_w + (int(x) + 1)];
+            const vec3 tl_u_prev = smoke_cells[int(y + 1) * cells_w + int(x)];
+            const vec3 tr_u_prev = smoke_cells[int(y + 1) * cells_w + (int(x) + 1)];
+            const vec3 bl_u_prev = smoke_cells[int(y) * cells_w + int(x)];
+            const vec3 br_u_prev = smoke_cells[int(y) * cells_w + (int(x) + 1)];
 
-            float wx = x - floor(x);
-            float wy = y - floor(y);
+            const float wx = x - floor(x);
+            const float wy = y - floor(y);
 
-            float top = tl_u_prev * (1.0f - wx) + tr_u_prev * (wx);
-            float bot = bl_u_prev * (1.0f - wx) + br_u_prev * (wx);
-
-            return top * (wy) + bot * (1.0f - wy);
+            const vec3 top = code_math::lerp(tl_u_prev, tr_u_prev, wx);
+            const vec3 bottom = code_math::lerp(bl_u_prev, br_u_prev, wx);
+            return code_math::lerp(bottom, top, wy);
         }
         float SampleEdge(float x, float y, int edge_w_in, int edge_h_in, std::vector<float> &edges_old)
         {
@@ -1469,7 +1526,7 @@ namespace CodeSimulation
         {
             std::vector<float> u_edges_old = edges_data.u;
             std::vector<float> v_edges_old = edges_data.v;
-            std::vector<float> smoke_cells_old = cells_data.smoke;
+            std::vector<vec3> smoke_cells_old = cells_data.smoke;
             for (int y = 0; y < edge_h; ++y)
             {
                 for (int x = 0; x < edge_w; ++x)
@@ -1483,8 +1540,8 @@ namespace CodeSimulation
                     float u = u_edges_old[i];
                     float v = GetVFromU(x, y, u, v_edges_old);
                     float pos[2] = {float(x), float(y)};
-                    float x_pos = pos[0] - u * dt / dx;
-                    float y_pos = pos[1] - v * dt / dy;
+                    float x_pos = pos[0] - u * params.dt / dx;
+                    float y_pos = pos[1] - v * params.dt / dy;
                     edges_data.u[i] = SampleEdge(x_pos, y_pos, edge_w, edge_h, u_edges_old);
                 }
             }
@@ -1504,8 +1561,8 @@ namespace CodeSimulation
                     float u = GetUFromV(x, y, v, u_edges_old);
 
                     float pos[2] = {float(x), float(y)};
-                    float x_pos = pos[0] - u * dt / dx;
-                    float y_pos = pos[1] - v * dt / dy;
+                    float x_pos = pos[0] - u * params.dt / dx;
+                    float y_pos = pos[1] - v * params.dt / dy;
                     edges_data.v[i] = SampleEdge(x_pos, y_pos, edge_w, edge_h, v_edges_old);
                 }
             }
@@ -1527,13 +1584,13 @@ namespace CodeSimulation
                     float v = (edges_data.v[b] + edges_data.v[t]) * 0.5f;
 
                     float pos[2] = {float(x), float(y)};
-                    float x_pos = pos[0] - u * dt / dx;
-                    float y_pos = pos[1] - v * dt / dy;
+                    float x_pos = pos[0] - u * params.dt / dx;
+                    float y_pos = pos[1] - v * params.dt / dy;
                     cells_data.smoke[i] = SampleSmoke(x_pos, y_pos, cells_data.w, cells_data.h, smoke_cells_old);
                     if (x == w - 2)
                     {
                         // kill smoke
-                        cells_data.smoke[i] = 0.0f;
+                        cells_data.smoke[i] = vec3(0.0f, 0.0f, 0.0f);
                     }
                 }
             }
@@ -1541,7 +1598,7 @@ namespace CodeSimulation
         void UpdateData()
         {
             sim_step_idx++;
-            total_t += dt;
+            total_t += params.dt;
         }
         void AdvectVelocityGPU(cudaStream_t stream)
         {
@@ -1549,7 +1606,7 @@ namespace CodeSimulation
             int cell_count = cells_view.w * cells_view.h;
             int edge_count = edges_view.edges_w * edges_view.edges_h;
 
-            CODE_API::CW_Memcpy(cells_view.smoke_input, cells_view.smoke_output, sizeof(float) * cell_count,
+            CODE_API::CW_Memcpy(cells_view.smoke_input, cells_view.smoke_output, sizeof(vec3) * cell_count,
                                 cudaMemcpyDeviceToDevice);
             CODE_API::CW_Memcpy(edges_view.u_input, edges_view.u_output, sizeof(float) * edge_count,
                                 cudaMemcpyDeviceToDevice);
@@ -1557,28 +1614,28 @@ namespace CodeSimulation
                                 cudaMemcpyDeviceToDevice);
             dim3 block(1024, 1, 1);
             dim3 grid((double(edge_w * edge_h) + 1023.0) / 1024.0, 1, 1);
-            CodeSimulationDevice::k_simulation_advection_u<<<grid, block, 0, stream>>>(edge_w * edge_h, dt, dx, dy,
+            CodeSimulationDevice::k_simulation_advection_u<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, dx, dy,
                                                                                        cells_view, edges_view);
-            CodeSimulationDevice::k_simulation_advection_v<<<grid, block, 0, stream>>>(edge_w * edge_h, dt, dx, dy,
+            CodeSimulationDevice::k_simulation_advection_v<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, dx, dy,
                                                                                        cells_view, edges_view);
             grid = dim3((cells_view.w * cells_view.h + block.x - 1) / block.x, 1, 1);
-            CodeSimulationDevice::k_simulation_advection_smoke<<<grid, block, 0, stream>>>(w * h, dt, dx, dy,
+            CodeSimulationDevice::k_simulation_advection_smoke<<<grid, block, 0, stream>>>(w * h, params.dt, dx, dy,
                                                                                            cells_view, edges_view);
         }
         void UpdateVelocityGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
             dim3 grid((double(edge_w * edge_h) + 1023.0) / 1024.0, 1, 1);
-            float k = dt / (density * dx);
-            CodeSimulationDevice::k_simulation_update_velocities_u<<<grid, block, 0, stream>>>(edge_w * edge_h, dt, k,
+            float k = params.dt / (params.density * dx);
+            CodeSimulationDevice::k_simulation_update_velocities_u<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, k,
                                                                                                cells_view, edges_view);
-            k = dt / (density * dy);
+            k = params.dt / (params.density * dy);
             CodeSimulationDevice::k_simulation_update_velocities_v<<<grid, block, 0, stream>>>(
-                edge_w * edge_h, dt, g, k, cells_view, edges_view);
+                edge_w * edge_h, params.dt, params.g, k, cells_view, edges_view);
         }
         void UpdateVelocity()
         {
-            float k = dt / (density * dx);
+            float k = params.dt / (params.density * dx);
             for (int y = 0; y < edge_h; ++y)
             {
                 for (int x = 0; x < edge_w; ++x)
@@ -1595,7 +1652,7 @@ namespace CodeSimulation
                     edges_data.u[y * edge_w + x] *= 0.99;
                 }
             }
-            k = dt / (density * dy);
+            k = params.dt / (params.density * dy);
             for (int y = 0; y < edge_h; ++y)
             {
                 for (int x = 0; x < edge_w; ++x)
@@ -1615,7 +1672,7 @@ namespace CodeSimulation
 
         void Projection()
         {
-            for (int iter = 0; iter < total_iter_cpu; ++iter)
+            for (int iter = 0; iter < params.total_iter_cpu; ++iter)
             {
                 for (int i = 0; i < cells_data.pressures.size(); ++i)
                 {
@@ -1653,7 +1710,7 @@ namespace CodeSimulation
                     float v_b = edges_data.GetV(x, y) * edges_data.GetStateV(x, y);
 
                     float velocities_sum = u_r - u_l + v_t - v_b;
-                    float pressure_new = (press_sum / float(s)) - (density * dx * velocities_sum) / (float(s) * dt);
+                    float pressure_new = (press_sum / float(s)) - (params.density * dx * velocities_sum) / (float(s) * params.dt);
                     cells_data.pressures[i] = pressure_new;
                 }
             }
@@ -1829,18 +1886,9 @@ namespace CodeSimulation
         c_edges_view edges_view = {};
         c_cells cells_data = {};
         c_edges edges_data = {};
-        float density = 1.0f;
         int64_t sim_step_idx = 0;
         float total_t = 0.0f;
-        float weight_sor = 1.6f;
-        int total_iter_gpu = 650;
-        float dt = 1.0f / 60.0f;
-        int total_iter_cpu = 60;
-        float g = -0.0f;
-        float wind_speed = 5.0f;
-        float viscosity = 10.0f;
-        bool debug = false;
-        bool gpu_sim = false;
+        sim_params params = {};
     };
 
 

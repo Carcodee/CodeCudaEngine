@@ -161,10 +161,10 @@ namespace CodeCuda
             dim3 block(128, 1, 1);
             // we usse pressure input since the input is always the last output because we do double buffering for
             // pressures
-            code_kernels::code_tests::k_simulation_read<<<grid, block, 0, stream>>>(
+            code_kernels::code_tests::k_simulation_cells_mapping<<<grid, block, 0, stream>>>(
                 1024 * 1024, simulation.w, simulation.h, 1.0f, 1.0f, 1.0f, simulation.edges_view.u_output,
                 simulation.edges_view.v_output, simulation.cells_view.divs, simulation.cells_view.pressures_input,
-                simulation.cells_view.smoke_output, (float *)this->mappedPtr);
+                simulation.cells_view.smoke_output, (code_math::vec3*)(this->mappedPtr));
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -182,14 +182,36 @@ namespace CodeCuda
     }
     C_Res C_SetDebugSimulation(bool val)
     {
-        simulation.debug = val;
+        simulation.params.debug = val;
         return C_Res::OK;
     }
-    
+
+    C_Res C_SetSimulationParams(const sim_params *params)
+    {
+        if (params == nullptr)
+        {
+            return C_Res::ERR;
+        }
+
+        simulation.params = *params;
+        return C_Res::OK;
+    }
+
+    C_Res C_GetSimulationParams(sim_params *params)
+    {
+        if (params == nullptr)
+        {
+            return C_Res::ERR;
+        }
+
+        *params = simulation.params;
+        return C_Res::OK;
+    }
+
     C_Res C_SetSimulationResolution(int w, int h)
     {
-        s_width = w; 
-        s_height = h; 
+        s_width = w;
+        s_height = h;
         simulation.w = s_width;
         simulation.h = s_height;
         simulation.RestartSim();
@@ -200,7 +222,7 @@ namespace CodeCuda
         simulation.RestartSim();
         return C_Res::OK;
     }
-    
+
     C_Res CodeCudaContext::C_Shutdown()
     {
         CODECUDA_PRINTLN("Shutdown: CodeCudaEngine");
@@ -232,10 +254,10 @@ namespace CodeCuda
         return C_Res::OK;
     }
 
-    C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float value)
+    C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float value_x, float value_y, float value_z)
     {
         assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddSmoke(x_pos, y_pos, radius, value);
+        simulation.AddSmoke(x_pos, y_pos, radius, code_math::vec3(value_x, value_y, value_z));
         return C_Res::OK;
     }
     C_Res C_AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
@@ -251,18 +273,20 @@ namespace CodeCuda
         simulation.AddRadialVelocity(x_pos, y_pos, radius, scale);
         return C_Res::OK;
     }
-    
-    C_Res C_AddVelocityGPU(int x_pos, int y_pos, int radius, float vel_x, float vel_y, CodeCudaContext* code_cuda_context)
+
+    C_Res C_AddVelocityGPU(int x_pos, int y_pos, int radius, float vel_x, float vel_y,
+                           CodeCudaContext *code_cuda_context)
     {
         assert(simulation.ready_to_run && "Simulation was not inited");
         simulation.AddVelocityGPU(x_pos, y_pos, radius, vel_x, vel_y, code_cuda_context->stream);
         return C_Res::OK;
     }
-    
-    C_Res C_AddSmokeGPU(int x_pos, int y_pos, int radius, float val, CodeCudaContext* code_cuda_context)
+
+    C_Res C_AddSmokeGPU(int x_pos, int y_pos, int radius, float val_x, float val_y, float val_z,
+                        CodeCudaContext *code_cuda_context)
     {
         assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddSmokeGPU(x_pos, y_pos, radius, val, code_cuda_context->stream);
+        simulation.AddSmokeGPU(x_pos, y_pos, radius, code_math::vec3(val_x, val_y, val_z), code_cuda_context->stream);
         return C_Res::OK;
     }
 
@@ -326,7 +350,7 @@ namespace CodeCuda
 
         dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
         dim3 block(BSIZE);
-        code_kernels::code_math::
+        code_kernels::
             k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), code_cuda_context->stream>>>(
                 M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
 
@@ -391,7 +415,7 @@ namespace CodeCuda
 
             std::map<std::string, kernel_launcher> kernels;
 
-            using namespace code_kernels::code_math;
+            using namespace code_kernels;
             add_kernel_launcher(
                 "naive_coalescent",
                 [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)

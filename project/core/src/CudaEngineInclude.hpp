@@ -15,6 +15,7 @@
 #include <functional>
 #include <cstdint>
 
+#include "CodeMath.hpp"
 #include "CodeCommon.hpp"
 #include "CodeInclude.h"
 #include "CodeKernels.hpp"
