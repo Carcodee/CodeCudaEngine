@@ -253,11 +253,29 @@ namespace CodeCuda
         C_AddVelocity(x, y, r, vel_x, vel_y);
         return C_Res::OK;
     }
+    C_Res C_MapImageToSmoke(int w_source, int h_source, int element_offset, void *data)
+    {
+        assert(simulation.ready_to_run && "Simulation was not inited");
+        simulation.MapImageToSmoke(w_source, h_source, element_offset, data);
+        return C_Res::OK;
+    }
 
+    C_Res C_MapVectorFieldUV(int w_source, int h_source, int element_offset, void *data)
+    {
+        assert(simulation.ready_to_run && "Simulation was not inited");
+        simulation.MapVectorFieldUV(w_source, h_source, element_offset, data);
+        return C_Res::OK;
+    }
     C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float value_x, float value_y, float value_z)
     {
         assert(simulation.ready_to_run && "Simulation was not inited");
         simulation.AddSmoke(x_pos, y_pos, radius, code_math::vec3(value_x, value_y, value_z));
+        return C_Res::OK;
+    }
+    C_Res C_SetSolid(int x_pos, int y_pos, int radius, bool solid)
+    {
+        assert(simulation.ready_to_run && "Simulation was not inited");
+        simulation.SetSolid(x_pos, y_pos, radius, solid);
         return C_Res::OK;
     }
     C_Res C_AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
