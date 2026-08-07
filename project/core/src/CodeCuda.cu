@@ -162,9 +162,9 @@ namespace CodeCuda
             // we usse pressure input since the input is always the last output because we do double buffering for
             // pressures
             code_kernels::code_tests::k_simulation_cells_mapping<<<grid, block, 0, stream>>>(
-                1024 * 1024, simulation.w, simulation.h, 1.0f, 1.0f, 1.0f, simulation.edges_view.u_output,
+                1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
                 simulation.edges_view.v_output, simulation.cells_view.divs, simulation.cells_view.pressures_input,
-                simulation.cells_view.smoke_output, (code_math::vec3*)(this->mappedPtr));
+                simulation.cells_view.smoke_output, simulation.cells_view.is_walls, (code_math::vec3*)(this->mappedPtr));
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -257,6 +257,12 @@ namespace CodeCuda
     {
         assert(simulation.ready_to_run && "Simulation was not inited");
         simulation.MapImageToSmoke(w_source, h_source, element_offset, data);
+        return C_Res::OK;
+    }
+    C_Res C_MapSolidMask(int w_source, int h_source, int *data)
+    {
+        assert(simulation.ready_to_run && "Simulation was not inited");
+        simulation.MapSolidMask(w_source, h_source, data);
         return C_Res::OK;
     }
 

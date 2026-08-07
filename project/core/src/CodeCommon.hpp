@@ -8,8 +8,8 @@
 
 #include <algorithm>
 
-#include "assert.h"
 #include "CodeSimulationParams.hpp"
+#include "assert.h"
 #include "common/Logger.hpp"
 
 namespace CodeCommon
@@ -344,7 +344,7 @@ namespace CodeSimulation
             //     float ry = float(rand() % 1000) / 1000.0f;
             //     float rz = float(rand() % 1000) / 1000.0f;
             //     smoke[i] = vec3(rx, ry, rz);
-            //     
+            //
             // }
             for (int i = 0; i < is_walls.size(); ++i)
             {
@@ -395,16 +395,17 @@ namespace CodeSimulation
             {
                 return true;
             }
-
+            
             const float px = (float(x) + 0.5f) / float(w);
             const float py = (float(y) + 0.5f) / float(h);
-
+            
             const float dx = px - 0.5f;
             const float dy = py - 0.5f;
-
+            
             constexpr float radius = 0.09f;
 
             return dx * dx + dy * dy <= radius * radius;
+            return false;
         }
     };
     struct c_edges
@@ -723,8 +724,8 @@ namespace CodeSimulation
             cells_data.pressures_output[idx] = pressure_new;
         }
 
-        __global__ void k_simulation_update_velocities_u(int size, float dt, float k, float diffusion_factor, c_cells_view cells_data,
-                                                         c_edges_view edges_view)
+        __global__ void k_simulation_update_velocities_u(int size, float dt, float k, float diffusion_factor,
+                                                         c_cells_view cells_data, c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
@@ -749,8 +750,9 @@ namespace CodeSimulation
             }
         }
 
-        __global__ void k_simulation_update_velocities_v(int size, float dt, float gravity, float k, float diffusion_factor,
-                                                         c_cells_view cells_data, c_edges_view edges_view)
+        __global__ void k_simulation_update_velocities_v(int size, float dt, float gravity, float k,
+                                                         float diffusion_factor, c_cells_view cells_data,
+                                                         c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
@@ -812,7 +814,8 @@ namespace CodeSimulation
                     SampleEdge(x_pos, y_pos, edges_view.edges_w, edges_view.edges_h, edges_view.v_input);
             }
         }
-        __global__ void k_simulation_advection_smoke(int size, float dt, float dx, float dy, float smoke_disipation_factor,c_cells_view cells_data,
+        __global__ void k_simulation_advection_smoke(int size, float dt, float dx, float dy,
+                                                     float smoke_disipation_factor, c_cells_view cells_data,
                                                      c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -823,6 +826,7 @@ namespace CodeSimulation
             int y = idx / cells_data.w;
             if (cells_data.is_walls[idx])
             {
+                cells_data.smoke_output[idx] = {0.0f, 0.0f, 0.0f};
                 return;
             }
             if (x == cells_data.w - 2)
@@ -944,12 +948,13 @@ namespace CodeSimulation
             edges_data.Resize(this->edge_w, this->edge_h);
 
             cells_data.Resize(w, h);
-            UpdateSolids();
+            InitSolids();
             InitViews();
             ready_to_run = true;
         }
-        void UpdateSolids()
+        void InitSolids()
         {
+
             // First pass: mark all solid-cell edges.
             for (int i = 0; i < cells_data.pressures.size(); ++i)
             {
@@ -999,6 +1004,75 @@ namespace CodeSimulation
                 edges_data.v[v_bottom] = 0.0f;
             }
 
+            for (int i = 0; i < cells_data.pressures.size(); ++i)
+            {
+                int x = i % w;
+                int y = i / w;
+
+                cells_data.edges_states_count[i] =
+                    static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
+                                         edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
+            }
+        }
+        void UpdateSolids(bool to_change_val)
+        {
+            // // First pass: mark all solid-cell edges.
+            // for (int i = 0; i < cells_data.pressures.size(); ++i)
+            // {
+            //     int x = i % w;
+            //     int y = i / w;
+            //     
+            //     bool is_solid = cells_data.is_walls[i] == 1;
+            //     if (is_solid != to_change_val)
+            //     {
+            //         continue;
+            //     }
+            //
+            //     int u_left;
+            //     int u_right;
+            //     int v_top;
+            //     int v_bottom;
+            //
+            //     GetCellEdgesIdxs(x, y, u_left, u_right, v_top, v_bottom);
+            //     if (x == 0)
+            //     {
+            //         continue;
+            //     }
+            //     if (x == w - 1)
+            //     {
+            //         continue;
+            //     }
+            //     if (y == 0)
+            //     {
+            //         continue;
+            //     }
+            //     if (y == h - 1)
+            //     {
+            //         continue;
+            //     }
+            //     // if (y == 0)
+            //     // {
+            //     //     edges_data.v[v_bottom] = -1.0f;
+            //     //     continue;
+            //     // }
+            //     // if (y == h - 1)
+            //     // {
+            //     //     edges_data.v[v_top] = 1.0f;
+            //     //     continue;
+            //     // }
+            //
+            //     edges_data.is_walls_u[u_left] = cells_data.is_walls[i];
+            //     edges_data.is_walls_u[u_right] = cells_data.is_walls[i];
+            //     edges_data.is_walls_v[v_top] = cells_data.is_walls[i];
+            //     edges_data.is_walls_v[v_bottom] = cells_data.is_walls[i];
+            //     
+            //     // float speed = cells_data.is_walls[i] == 1 ? 0.0 : 1.0;
+            //     // edges_data.u[u_left] = cells_data.is_walls[i] == 1 ? 0 : edges_data.u[u_left];
+            //     // edges_data.u[u_right] = cells_data.is_walls[i] == 1 ? 0 : edges_data.u[u_right];
+            //     // edges_data.v[v_top] = cells_data.is_walls[i] == 1 ? 0 : edges_data.v[v_top];
+            //     // edges_data.v[v_bottom] = cells_data.is_walls[i] == 1 ? 0 : edges_data.v[v_bottom];
+            // }
+            //
             for (int i = 0; i < cells_data.pressures.size(); ++i)
             {
                 int x = i % w;
@@ -1158,8 +1232,8 @@ namespace CodeSimulation
         {
             dim3 block(1024, 1, 1);
             dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
-            CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(w * h, params.wind_speed, params.g, params.density, dx, params.dt,
-                                                                             cells_view, edges_view);
+            CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(
+                w * h, params.wind_speed, params.g, params.density, dx, params.dt, cells_view, edges_view);
         }
         void DiffuseGPU(cudaStream_t stream)
         {
@@ -1167,8 +1241,8 @@ namespace CodeSimulation
             dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
             for (int i = 0; i < params.total_iter_gpu; ++i)
             {
-                CodeSimulationDevice::k_diffuse<<<grid, block, 0, stream>>>(edge_h * edge_w, params.viscosity, params.dt, cells_view,
-                                                                            edges_view);
+                CodeSimulationDevice::k_diffuse<<<grid, block, 0, stream>>>(edge_h * edge_w, params.viscosity,
+                                                                            params.dt, cells_view, edges_view);
                 std::swap(edges_view.u_input, edges_view.u_output);
                 std::swap(edges_view.v_input, edges_view.v_output);
             }
@@ -1182,8 +1256,8 @@ namespace CodeSimulation
             dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
             for (int iter = 0; iter < params.total_iter_gpu; ++iter)
             {
-                CodeSimulationDevice::k_simulation_projection<<<grid, block, 0, stream>>>(w * h, params.density, dx, params.dt,
-                                                                                          cells_view, edges_view);
+                CodeSimulationDevice::k_simulation_projection<<<grid, block, 0, stream>>>(
+                    w * h, params.density, dx, params.dt, cells_view, edges_view);
                 std::swap(cells_view.pressures_input, cells_view.pressures_output);
             }
         }
@@ -1338,20 +1412,20 @@ namespace CodeSimulation
                                  edges_view.v_output);
             }
         }
-        
-        void MapImageToSmoke(int source_w, int source_h, int per_element_offset, void* data)
+
+        void MapImageToSmoke(int source_w, int source_h, int per_element_offset, void *data)
         {
-            
+
             if (params.gpu_sim)
             {
                 CopyDeviceToHost(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
             }
-            
+
             assert(data && "Data to map is null");
-            
-            float* data_as_float = (float*)data;
-            
+
+            float *data_as_float = (float *)data;
+
             for (int y = 0; y < cells_data.h; ++y)
             {
                 for (int x = 0; x < cells_data.w; ++x)
@@ -1360,7 +1434,7 @@ namespace CodeSimulation
                     int source_pos_x = int(uv.x * (source_w - 1));
                     int source_pos_y = int(uv.y * (source_h - 1));
                     int base_offset = source_pos_y * source_w + source_pos_x;
-                    
+
                     float r = data_as_float[base_offset * per_element_offset + 0];
                     float g = data_as_float[base_offset * per_element_offset + 1];
                     float b = data_as_float[base_offset * per_element_offset + 2];
@@ -1372,22 +1446,21 @@ namespace CodeSimulation
                 CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
             }
-            
         }
-        
-        void MapVectorFieldUV(int source_w, int source_h, int per_element_offset, void* data)
+
+        void MapVectorFieldUV(int source_w, int source_h, int per_element_offset, void *data)
         {
-            
+
             if (params.gpu_sim)
             {
                 CopyDeviceToHost(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
             }
-            
+
             assert(data && "Data to map is null");
-            
-            float* data_as_float = (float*)data;
-            
+
+            float *data_as_float = (float *)data;
+
             for (int y = 0; y < edges_data.edges_h; ++y)
             {
                 for (int x = 0; x < edges_data.edges_w; ++x)
@@ -1396,11 +1469,11 @@ namespace CodeSimulation
                     int source_pos_x = int(uv.x * (source_w - 1));
                     int source_pos_y = int(uv.y * (source_h - 1));
                     int base_offset = source_pos_y * source_w + source_pos_x;
-                    
+
                     float u = data_as_float[base_offset * per_element_offset + 0];
                     float v = data_as_float[base_offset * per_element_offset + 1];
-                    edges_data.u[y * edges_data.edges_w + x] += u; 
-                    edges_data.v[y * edges_data.edges_w + x] += v; 
+                    edges_data.u[y * edges_data.edges_w + x] += u;
+                    edges_data.v[y * edges_data.edges_w + x] += v;
                 }
             }
             if (params.gpu_sim)
@@ -1408,7 +1481,6 @@ namespace CodeSimulation
                 CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
                                  edges_view.v_output);
             }
-            
         }
         void AddSmoke(int x_pos, int y_pos, int radius, vec3 value)
         {
@@ -1451,8 +1523,57 @@ namespace CodeSimulation
                                  edges_view.v_output);
             }
         }
-        
-        
+
+
+         void MapSolidMask(int source_w, int source_h, int *mask)
+        {
+
+            if (params.gpu_sim)
+            {
+                CopyDeviceToHost(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
+                                 edges_view.v_output);
+            }
+
+            assert(mask && "Data to map is null");
+
+            for (int y = 0; y < cells_data.h; ++y)
+            {
+                for (int x = 0; x < cells_data.w; ++x)
+                {
+                    vec2 uv = {x / float(cells_data.w - 1), y / float(cells_data.h - 1)};
+                    int source_pos_x = int(uv.x * (source_w - 1));
+                    int source_pos_y = int(uv.y * (source_h - 1));
+                    int base_offset = source_pos_y * source_w + source_pos_x;
+                    int cell_value = mask[source_pos_y * source_w + source_pos_x];
+                    cells_data.is_walls[y * cells_data.w + x] = cell_value;
+                    
+                    int u_left;
+                    int u_right;
+                    int v_top;
+                    int v_bottom;
+                    GetCellEdgesIdxs(x, y, u_left, u_right, v_top, v_bottom);
+                    
+                    edges_data.is_walls_u[u_left] = cells_data.is_walls[y * cells_data.w + x];
+                    edges_data.is_walls_u[u_right] = cells_data.is_walls[y * cells_data.w + x];
+                    edges_data.is_walls_v[v_top] = cells_data.is_walls[y * cells_data.w + x];
+                    edges_data.is_walls_v[v_bottom] = cells_data.is_walls[y * cells_data.w + x];
+                }
+            }
+            for (int i = 0; i < cells_data.pressures.size(); ++i)
+            {
+                int x = i % w;
+                int y = i / w;
+
+                cells_data.edges_states_count[i] =
+                    static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
+                                         edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
+            }
+            if (params.gpu_sim)
+            {
+                CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
+                                 edges_view.v_output);
+            }
+        }
         void SetSolid(int x_pos, int y_pos, int radius, bool solid)
         {
             if (x_pos < 0 || x_pos >= w || y_pos < 0 || y_pos >= h)
@@ -1482,9 +1603,33 @@ namespace CodeSimulation
                     }
                     int idx = y_final * w + x_final;
                     cells_data.is_walls[idx] = solid ? 1 : 0;
+                    int x_cells = idx % w;
+                    int y_cells = idx / w;
+                    
+                    int u_left;
+                    int u_right;
+                    int v_top;
+                    int v_bottom;
+                    GetCellEdgesIdxs(x_cells, y_cells, u_left, u_right, v_top, v_bottom);
+                    
+                    edges_data.is_walls_u[u_left] = cells_data.is_walls[idx];
+                    edges_data.is_walls_u[u_right] = cells_data.is_walls[idx];
+                    edges_data.is_walls_v[v_top] = cells_data.is_walls[idx];
+                    edges_data.is_walls_v[v_bottom] = cells_data.is_walls[idx];
+                    
                 }
             }
-            UpdateSolids();
+            
+            for (int i = 0; i < cells_data.pressures.size(); ++i)
+            {
+                int x = i % w;
+                int y = i / w;
+
+                cells_data.edges_states_count[i] =
+                    static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
+                                         edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
+            }
+            // UpdateSolids(solid);
             if (params.gpu_sim)
             {
                 CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
@@ -1729,21 +1874,21 @@ namespace CodeSimulation
                                 cudaMemcpyDeviceToDevice);
             dim3 block(1024, 1, 1);
             dim3 grid((double(edge_w * edge_h) + 1023.0) / 1024.0, 1, 1);
-            CodeSimulationDevice::k_simulation_advection_u<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, dx, dy,
-                                                                                       cells_view, edges_view);
-            CodeSimulationDevice::k_simulation_advection_v<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, dx, dy,
-                                                                                       cells_view, edges_view);
+            CodeSimulationDevice::k_simulation_advection_u<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, dx,
+                                                                                       dy, cells_view, edges_view);
+            CodeSimulationDevice::k_simulation_advection_v<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, dx,
+                                                                                       dy, cells_view, edges_view);
             grid = dim3((cells_view.w * cells_view.h + block.x - 1) / block.x, 1, 1);
-            CodeSimulationDevice::k_simulation_advection_smoke<<<grid, block, 0, stream>>>(w * h, params.dt, dx, dy, params.smoke_dissipation,
-                                                                                           cells_view, edges_view);
+            CodeSimulationDevice::k_simulation_advection_smoke<<<grid, block, 0, stream>>>(
+                w * h, params.dt, dx, dy, params.smoke_dissipation, cells_view, edges_view);
         }
         void UpdateVelocityGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
             dim3 grid((double(edge_w * edge_h) + 1023.0) / 1024.0, 1, 1);
             float k = params.dt / (params.density * dx);
-            CodeSimulationDevice::k_simulation_update_velocities_u<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, k, params.velocity_dissipation,
-                                                                                               cells_view, edges_view);
+            CodeSimulationDevice::k_simulation_update_velocities_u<<<grid, block, 0, stream>>>(
+                edge_w * edge_h, params.dt, k, params.velocity_dissipation, cells_view, edges_view);
             k = params.dt / (params.density * dy);
             CodeSimulationDevice::k_simulation_update_velocities_v<<<grid, block, 0, stream>>>(
                 edge_w * edge_h, params.dt, params.g, k, params.velocity_dissipation, cells_view, edges_view);
@@ -1825,7 +1970,8 @@ namespace CodeSimulation
                     float v_b = edges_data.GetV(x, y) * edges_data.GetStateV(x, y);
 
                     float velocities_sum = u_r - u_l + v_t - v_b;
-                    float pressure_new = (press_sum / float(s)) - (params.density * dx * velocities_sum) / (float(s) * params.dt);
+                    float pressure_new =
+                        (press_sum / float(s)) - (params.density * dx * velocities_sum) / (float(s) * params.dt);
                     cells_data.pressures[i] = pressure_new;
                 }
             }

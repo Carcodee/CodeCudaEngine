@@ -650,19 +650,27 @@ namespace code_kernels
             data[idx] = sin(idxNorm * time);
         }
 
-        __global__ void k_simulation_edges_mapping(int size, int sim_w, int sim_h, float min_speed, float max_speed,
-                                                   float avg_speed, float *u_edges, float *v_edges, float *grid_div,
-                                                   float *grid_pressures, const ::code_math::vec3 *grid_smoke,
+        __global__ void k_simulation_edges_mapping(int size, int sim_w, int sim_h, float *u_edges, float *v_edges, float *grid_div,
+                                                   float *grid_pressures, const ::code_math::vec3 *grid_smoke, uint8_t* is_walls,
                                                    float *data)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
+            
             int x = idx % 1024;
             int y = idx / 1024;
 
             auto uv = float2(float(x) / 1023.0f, float(y) / 1023.0f);
             auto pos_float = float2(uv.x * float(sim_w), uv.y * float(sim_h));
+            
+            int x_cells = floor(pos_float.x);
+            int y_cells = floor(pos_float.y);
+            if (is_walls[y_cells * sim_w + x_cells] == 1)
+            {
+                data[idx] = 0.0;
+                return;
+            }
             // 0 - 1 down dir in y and 0 - 1 right in x
             auto wx = pos_float.x - floor(pos_float.x);
             auto wy = pos_float.y - floor(pos_float.y);
@@ -696,9 +704,8 @@ namespace code_kernels
 
             data[idx] = v_edges[idx_t];
         }
-        __global__ void k_simulation_cells_mapping(int size, int sim_w, int sim_h, float min_speed, float max_speed,
-                                                   float avg_speed, float *u_edges, float *v_edges, float *grid_div,
-                                                   float *grid_pressures, const ::code_math::vec3 *grid_smoke,
+        __global__ void k_simulation_cells_mapping(int size, int sim_w, int sim_h, float *u_edges, float *v_edges, float *grid_div,
+                                                   float *grid_pressures, const ::code_math::vec3 *grid_smoke, uint8_t* is_walls,
                                                    code_math::vec3 *data)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -707,11 +714,19 @@ namespace code_kernels
             
             int x = idx % 1024;
             int y = idx / 1024;
+            
 
             // bilinear for div and cell values
             auto uv = float2(float(x) / 1023.0f, float(y) / 1023.0f);
             auto pos_float = float2(uv.x * float(sim_w - 1), uv.y * float(sim_h - 1));
-
+            int x_cells = floor(pos_float.x);
+            int y_cells = floor(pos_float.y);
+            if (is_walls[y_cells * sim_w + x_cells] == 1)
+            {
+                data[idx] = code_math::vec3(0.0);
+                return;
+            }
+            
             // 0 - 1 down dir in y and 0 - 1 right in x
             auto wx = pos_float.x - floor(pos_float.x);
             auto wy = pos_float.y - floor(pos_float.y);
