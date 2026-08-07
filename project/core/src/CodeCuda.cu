@@ -161,6 +161,11 @@ namespace CodeCuda
             dim3 block(128, 1, 1);
             // we usse pressure input since the input is always the last output because we do double buffering for
             // pressures
+            // code_kernels::code_tests::k_simulation_edges_mapping<<<grid, block, 0, stream>>>(
+            //     1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
+            //     simulation.edges_view.v_output, simulation.cells_view.divs, simulation.cells_view.pressures_input,
+            //     simulation.cells_view.smoke_output, simulation.cells_view.is_walls, (float*)(this->mappedPtr));
+            
             code_kernels::code_tests::k_simulation_cells_mapping<<<grid, block, 0, stream>>>(
                 1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
                 simulation.edges_view.v_output, simulation.cells_view.divs, simulation.cells_view.pressures_input,

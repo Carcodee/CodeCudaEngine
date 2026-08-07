@@ -702,7 +702,7 @@ namespace code_kernels
 
             int idx_t = int(pos_float.y) * int(edges_w) + int(pos_float.x);
 
-            data[idx] = v_edges[idx_t];
+            data[idx] = sqrt(u * u + v * v);
         }
         __global__ void k_simulation_cells_mapping(int size, int sim_w, int sim_h, float *u_edges, float *v_edges, float *grid_div,
                                                    float *grid_pressures, const ::code_math::vec3 *grid_smoke, uint8_t* is_walls,

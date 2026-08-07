@@ -396,15 +396,15 @@ namespace CodeSimulation
                 return true;
             }
             
-            const float px = (float(x) + 0.5f) / float(w);
-            const float py = (float(y) + 0.5f) / float(h);
-            
-            const float dx = px - 0.5f;
-            const float dy = py - 0.5f;
-            
-            constexpr float radius = 0.09f;
-
-            return dx * dx + dy * dy <= radius * radius;
+            // const float px = (float(x) + 0.5f) / float(w);
+            // const float py = (float(y) + 0.5f) / float(h);
+            //
+            // const float dx = px - 0.5f;
+            // const float dy = py - 0.5f;
+            //
+            // constexpr float radius = 0.09f;
+            //
+            // return dx * dx + dy * dy <= radius * radius;
             return false;
         }
     };
@@ -1540,11 +1540,60 @@ namespace CodeSimulation
             {
                 for (int x = 0; x < cells_data.w; ++x)
                 {
+                    if (x == 0 || y == 0 || x == cells_data.w - 1 || y == cells_data.h - 1)
+                    {
+                        continue;
+                    }
+                    
+                    if (x == 1 || y == 1 || x == cells_data.w - 2 || y == cells_data.h - 2)
+                    {
+                        continue;
+                    }
                     vec2 uv = {x / float(cells_data.w - 1), y / float(cells_data.h - 1)};
                     int source_pos_x = int(uv.x * (source_w - 1));
                     int source_pos_y = int(uv.y * (source_h - 1));
                     int base_offset = source_pos_y * source_w + source_pos_x;
                     int cell_value = mask[source_pos_y * source_w + source_pos_x];
+                    if (cell_value == 1)
+                    {
+                        continue;
+                    }
+                    cells_data.is_walls[y * cells_data.w + x] = cell_value;
+                    
+                    int u_left;
+                    int u_right;
+                    int v_top;
+                    int v_bottom;
+                    GetCellEdgesIdxs(x, y, u_left, u_right, v_top, v_bottom);
+                    
+                    edges_data.is_walls_u[u_left] = cells_data.is_walls[y * cells_data.w + x];
+                    edges_data.is_walls_u[u_right] = cells_data.is_walls[y * cells_data.w + x];
+                    edges_data.is_walls_v[v_top] = cells_data.is_walls[y * cells_data.w + x];
+                    edges_data.is_walls_v[v_bottom] = cells_data.is_walls[y * cells_data.w + x];
+                }
+            }
+            for (int y = 0; y < cells_data.h; ++y)
+            {
+                for (int x = 0; x < cells_data.w; ++x)
+                {
+                    if (x == 0 || y == 0 || x == cells_data.w - 1 || y == cells_data.h - 1)
+                    {
+                        continue;
+                    }
+                    
+                    if (x == 1 || y == 1 || x == cells_data.w - 2 || y == cells_data.h - 2)
+                    {
+                        continue;
+                    }
+                    vec2 uv = {x / float(cells_data.w - 1), y / float(cells_data.h - 1)};
+                    int source_pos_x = int(uv.x * (source_w - 1));
+                    int source_pos_y = int(uv.y * (source_h - 1));
+                    int base_offset = source_pos_y * source_w + source_pos_x;
+                    int cell_value = mask[source_pos_y * source_w + source_pos_x];
+                    if (cell_value == 0)
+                    {
+                        continue;
+                    }
                     cells_data.is_walls[y * cells_data.w + x] = cell_value;
                     
                     int u_left;
