@@ -668,7 +668,7 @@ namespace code_kernels
             int y_cells = floor(pos_float.y);
             if (is_walls[y_cells * sim_w + x_cells] == 1)
             {
-                data[idx] = 0.0;
+                data[idx] = -1.0;
                 return;
             }
             // 0 - 1 down dir in y and 0 - 1 right in x
@@ -723,7 +723,7 @@ namespace code_kernels
             int y_cells = floor(pos_float.y);
             if (is_walls[y_cells * sim_w + x_cells] == 1)
             {
-                data[idx] = code_math::vec3(0.0);
+                data[idx] = code_math::vec3(-1.0);
                 return;
             }
             
