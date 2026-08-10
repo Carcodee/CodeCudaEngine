@@ -690,7 +690,7 @@ namespace CodeSimulation
                 return;
 
             int x = idx % cells_data.w;
-            int y = idx / cells_data.h;
+            int y = idx / cells_data.w;
 
             uint8_t s = GetCellEdgesStateCount(x, y, cells_data.w, cells_data.edges_states_count);
             if (s == 0)

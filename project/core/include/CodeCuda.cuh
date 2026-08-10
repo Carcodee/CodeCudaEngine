@@ -40,9 +40,13 @@ namespace CodeCuda
         C_Res C_SignalExternalSemaphore(uint64_t signal_value);
         C_Res C_WaitExternalSemaphore(uint64_t wait_value);
         C_Res C_ExecuteCPU();
+        
+        C_Res C_SetLauncherFunction(std::function<void(cudaStream_t)> kernelFunc);
         C_Res C_ExecuteKernel();
 
         C_Res C_Shutdown();
+        
+        
         cudaStream_t stream = nullptr;
         int device = -1;
         bool initialized = false;

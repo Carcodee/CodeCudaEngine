@@ -85,6 +85,10 @@ namespace CodeCuda
         this->cpu_launcher.task();
         return C_Res::OK;
     }
+    C_Res CodeCudaContext::C_SetLauncherFunction(std::function<void(cudaStream_t)> kernelFunc)
+    {
+        this->kernel_launcher.kernel = std::move(kernelFunc);
+    }
     C_Res CodeCudaContext::C_InitFromExternalDevice(uint8_t *vkDeviceUUID, size_t UUID_SIZE)
     {
         CODECUDA_PRINTLN("Starting CodeCudaEngine Init");
