@@ -17,6 +17,7 @@ namespace CodeCuda
         float g = -0.0f;
         float wind_speed = 1.5f;
         float viscosity = 0.1f;
+        float smoke_diffuse_coef = 0.1f;
         bool debug = false;
         bool gpu_sim = true;
         float smoke_dissipation = 0.00;

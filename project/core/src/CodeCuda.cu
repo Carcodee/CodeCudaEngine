@@ -169,7 +169,7 @@ namespace CodeCuda
             code_kernels::code_tests::k_simulation_cells_mapping<<<grid, block, 0, stream>>>(
                 1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
                 simulation.edges_view.v_output, simulation.cells_view.divs, simulation.cells_view.pressures_input,
-                simulation.cells_view.smoke_output, simulation.cells_view.is_walls, (code_math::vec3*)(this->mappedPtr));
+                simulation.cells_view.smoke_output, simulation.cells_view.is_walls, (code_math::vec4*)(this->mappedPtr));
         };
         CODE_API::CW_DeviceSynchronize();
         return C_Res::OK;
@@ -277,10 +277,10 @@ namespace CodeCuda
         simulation.MapVectorFieldUV(w_source, h_source, element_offset, data);
         return C_Res::OK;
     }
-    C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float value_x, float value_y, float value_z)
+    C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float value_x, float value_y, float value_z, float density)
     {
         assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddSmoke(x_pos, y_pos, radius, code_math::vec3(value_x, value_y, value_z));
+        simulation.AddSmoke(x_pos, y_pos, radius, code_math::vec4(value_x, value_y, value_z, density));
         return C_Res::OK;
     }
     C_Res C_SetSolid(int x_pos, int y_pos, int radius, bool solid)
@@ -311,11 +311,11 @@ namespace CodeCuda
         return C_Res::OK;
     }
 
-    C_Res C_AddSmokeGPU(int x_pos, int y_pos, int radius, float val_x, float val_y, float val_z,
+    C_Res C_AddSmokeGPU(int x_pos, int y_pos, int radius, float val_x, float val_y, float val_z, float density,
                         CodeCudaContext *code_cuda_context)
     {
         assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddSmokeGPU(x_pos, y_pos, radius, code_math::vec3(val_x, val_y, val_z), code_cuda_context->stream);
+        simulation.AddSmokeGPU(x_pos, y_pos, radius, code_math::vec4(val_x, val_y, val_z, density), code_cuda_context->stream);
         return C_Res::OK;
     }
 

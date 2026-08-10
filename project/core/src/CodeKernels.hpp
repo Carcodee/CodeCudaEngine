@@ -705,8 +705,8 @@ namespace code_kernels
             data[idx] = sqrt(u * u + v * v);
         }
         __global__ void k_simulation_cells_mapping(int size, int sim_w, int sim_h, float *u_edges, float *v_edges, float *grid_div,
-                                                   float *grid_pressures, const ::code_math::vec3 *grid_smoke, uint8_t* is_walls,
-                                                   code_math::vec3 *data)
+                                                   float *grid_pressures, const ::code_math::vec4 *grid_smoke, uint8_t* is_walls,
+                                                   code_math::vec4 *data)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
@@ -723,7 +723,7 @@ namespace code_kernels
             int y_cells = floor(pos_float.y);
             if (is_walls[y_cells * sim_w + x_cells] == 1)
             {
-                data[idx] = code_math::vec3(-1.0);
+                data[idx] = code_math::vec4(-1.0);
                 return;
             }
             
@@ -737,15 +737,15 @@ namespace code_kernels
             auto tr = int2(ceil(pos_float.x), pos_float.y);
 
 
-            const ::code_math::vec3 val_tl = grid_smoke[tl.y * sim_w + tl.x];
-            const ::code_math::vec3 val_tr = grid_smoke[tr.y * sim_w + tr.x];
-            const ::code_math::vec3 val_bl = grid_smoke[bl.y * sim_w + bl.x];
-            const ::code_math::vec3 val_br = grid_smoke[br.y * sim_w + br.x];
+            const ::code_math::vec4 val_tl = grid_smoke[tl.y * sim_w + tl.x];
+            const ::code_math::vec4 val_tr = grid_smoke[tr.y * sim_w + tr.x];
+            const ::code_math::vec4 val_bl = grid_smoke[bl.y * sim_w + bl.x];
+            const ::code_math::vec4 val_br = grid_smoke[br.y * sim_w + br.x];
 
-            const ::code_math::vec3 top = (val_tl * (1.0f - wx)) + (val_tr * wx);
-            const ::code_math::vec3 bottom = (val_bl * (1.0f - wx)) + (val_br * wx);
+            const ::code_math::vec4 top = (val_tl * (1.0f - wx)) + (val_tr * wx);
+            const ::code_math::vec4 bottom = (val_bl * (1.0f - wx)) + (val_br * wx);
 
-            const ::code_math::vec3 final = (top * (1.0f - wy)) + (bottom * wy);
+            const ::code_math::vec4 final = (top * (1.0f - wy)) + (bottom * wy);
 
             data[idx] = final;
             //
