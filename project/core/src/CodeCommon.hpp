@@ -312,10 +312,10 @@ namespace CodeBenchmarking
 
 
 } // namespace CodeBenchmarking
-namespace CodeSimulation
+namespace CodeCuda::FluidSimulation 
 {
     using namespace code_math;
-    using sim_params = CodeCuda::sim_params;
+    using sim_params = sim_params;
     struct c_cells
     {
         std::vector<float> divs;
@@ -1258,6 +1258,7 @@ namespace CodeSimulation
 
         void UpdateSimulation(cudaStream_t stream = nullptr)
         {
+            
             if (params.gpu_sim)
             {
                 UpdateSimulationGPU(stream);

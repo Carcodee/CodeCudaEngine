@@ -69,11 +69,11 @@ int main()
     cuda_context->C_Init();
     // TestMatmulShapes(cuda_context);
     // delete(cuda_context);
-    CodeCuda::C_SetDebugSimulation(true);
+    CodeCuda::FluidSimulation::C_SetDebugSimulation(true);
     for (int i = 0; i < 100; ++i)
     {
         // CodeCuda::C_AddRadialVelocity(0, 0, 1, 1);
-        CodeCuda::C_UpdateSimGPU(cuda_context);
+        CodeCuda::FluidSimulation::C_UpdateSimGPU(cuda_context);
     }
     cuda_context->C_Shutdown();
     while (true)

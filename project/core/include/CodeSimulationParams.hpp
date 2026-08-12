@@ -7,22 +7,25 @@
 
 namespace CodeCuda
 {
-    struct sim_params
+    namespace FluidSimulation
     {
-        float density = 1.0f;
-        float weight_sor = 1.6f;
-        int total_iter_gpu = 650;
-        float dt = 1.0f / 120.0f;
-        int total_iter_cpu = 60;
-        float g = -0.0f;
-        float wind_speed = 1.5f;
-        float viscosity = 0.1f;
-        float smoke_diffuse_coef = 0.1f;
-        bool debug = false;
-        bool gpu_sim = true;
-        float smoke_dissipation = 0.00;
-        float velocity_dissipation = 0.01;
-    };
+        struct sim_params
+        {
+            float density = 1.0f;
+            float weight_sor = 1.6f;
+            int total_iter_gpu = 650;
+            float dt = 1.0f / 120.0f;
+            int total_iter_cpu = 60;
+            float g = -0.0f;
+            float wind_speed = 1.5f;
+            float viscosity = 0.1f;
+            float smoke_diffuse_coef = 0.1f;
+            bool debug = false;
+            bool gpu_sim = true;
+            float smoke_dissipation = 0.00;
+            float velocity_dissipation = 0.01;
+        };
+    } // namespace FluidSimulation
 } // namespace CodeCuda
 
 #endif // CODE_SIMULATION_PARAMS_HPP

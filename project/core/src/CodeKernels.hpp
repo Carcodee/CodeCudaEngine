@@ -651,7 +651,7 @@ namespace code_kernels
         }
 
         __global__ void k_simulation_edges_mapping(int size, int sim_w, int sim_h, float *u_edges, float *v_edges, float *grid_div,
-                                                   float *grid_pressures, const ::code_math::vec3 *grid_smoke, uint8_t* is_walls,
+                                                   float *grid_pressures, uint8_t* is_walls,
                                                    float *data)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;

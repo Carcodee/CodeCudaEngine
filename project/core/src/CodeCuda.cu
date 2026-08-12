@@ -3,6 +3,8 @@
 #define CODECUDA_CU
 
 
+#include <utility>
+
 #include "CudaEngineInclude.hpp"
 
 
@@ -10,12 +12,13 @@ namespace CodeCuda
 {
 
 
-    static CodeSimulation::c_grid simulation = {};
-    void add_kernel_launcher(const std::string &name, std::function<void(cudaStream_t)> kernelFunc,
+    static FluidSimulation::c_grid simulation = {};
+
+    void add_kernel_launcher(const std::string &name, std::function<void(CodeCudaContext *)> kernelFunc,
                              std::map<std::string, kernel_launcher> &kernels_out)
     {
         kernel_launcher launcher;
-        launcher.kernel = std::move(kernelFunc);
+        launcher.SetKernelFunct(std::move(kernelFunc));
         kernels_out.try_emplace(name, launcher);
     }
 
@@ -53,7 +56,6 @@ namespace CodeCuda
 
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
-        simulation.InitGrid(s_width, s_height);
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("");
         CODECUDA_PRINTLN("");
@@ -77,17 +79,23 @@ namespace CodeCuda
     }
     C_Res CodeCudaContext::C_ExecuteKernel()
     {
-        this->kernel_launcher.kernel(this->stream);
+        this->kernel_launcher.Execute(this);
         return C_Res::OK;
     }
     C_Res CodeCudaContext::C_ExecuteCPU()
     {
-        this->cpu_launcher.task();
+        this->cpu_launcher.Execute();
         return C_Res::OK;
     }
-    C_Res CodeCudaContext::C_SetLauncherFunction(std::function<void(cudaStream_t)> kernelFunc)
+    C_Res CodeCudaContext::C_SetPreKernelFunction(std::function<void()> funct)
     {
-        this->kernel_launcher.kernel = std::move(kernelFunc);
+        this->cpu_launcher.SetCPUFunct(std::move(funct));
+        return C_Res::OK;
+    }
+    C_Res CodeCudaContext::C_SetKernelLauncherFunction(std::function<void(CodeCudaContext *)> kernelFunc)
+    {
+        this->kernel_launcher.SetKernelFunct(std::move(kernelFunc));
+        return C_Res::OK;
     }
     C_Res CodeCudaContext::C_InitFromExternalDevice(uint8_t *vkDeviceUUID, size_t UUID_SIZE)
     {
@@ -130,7 +138,7 @@ namespace CodeCuda
         CODE_API::CW_SetDevice(current_device);
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
-        simulation.InitGrid(s_width, s_height);
+
         CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
         CODECUDA_PRINTLN("GPU Device index: ", current_device, "\nName: ", device_prop.name,
                          " \nWith compute capability: ", device_prop.major, device_prop.minor);
@@ -138,7 +146,7 @@ namespace CodeCuda
     }
 
 
-    C_Res CodeCudaContext::C_ImportExternalBuffer(HANDLE win_handle, size_t buffer_size)
+    C_Res CodeCudaContext::C_ImportExternalBuffer(HANDLE win_handle, size_t buffer_size, uint32_t element_count)
     {
         cudaExternalMemoryHandleDesc cuda_external_memory_buffer_desc = {};
 
@@ -155,27 +163,10 @@ namespace CodeCuda
         buffer_desc.size = buffer_size;
 
         CODE_API::CW_ExternalMemoryGetMappedBuffer(&this->mappedPtr, cuda_external_memory, &buffer_desc);
-
-        this->cpu_launcher.task = [this]() { this->curr_t += time_step; };
-        this->kernel_launcher.kernel = [this](cudaStream_t stream)
-        {
-            // simulation.UpdateSimDeviceOnly(stream);
-            simulation.UpdateSimulation(stream);
-            dim3 grid((1024 * 1024) / 128, 1, 1);
-            dim3 block(128, 1, 1);
-            // we usse pressure input since the input is always the last output because we do double buffering for
-            // pressures
-            // code_kernels::code_tests::k_simulation_edges_mapping<<<grid, block, 0, stream>>>(
-            //     1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
-            //     simulation.edges_view.v_output, simulation.cells_view.divs, simulation.cells_view.pressures_input,
-            //     simulation.cells_view.smoke_output, simulation.cells_view.is_walls, (float*)(this->mappedPtr));
-            
-            code_kernels::code_tests::k_simulation_cells_mapping<<<grid, block, 0, stream>>>(
-                1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
-                simulation.edges_view.v_output, simulation.cells_view.divs, simulation.cells_view.pressures_input,
-                simulation.cells_view.smoke_output, simulation.cells_view.is_walls, (code_math::vec4*)(this->mappedPtr));
-        };
         CODE_API::CW_DeviceSynchronize();
+        
+        this->mapped_buffer_element_count = int(element_count);
+        
         return C_Res::OK;
     }
 
@@ -187,48 +178,6 @@ namespace CodeCuda
 
         CODE_API::CW_ImportExternalSemaphore(&this->external_semaphore, &desc);
 
-        return C_Res::OK;
-    }
-    C_Res C_SetDebugSimulation(bool val)
-    {
-        simulation.params.debug = val;
-        return C_Res::OK;
-    }
-
-    C_Res C_SetSimulationParams(const sim_params *params)
-    {
-        if (params == nullptr)
-        {
-            return C_Res::ERR;
-        }
-
-        simulation.params = *params;
-        return C_Res::OK;
-    }
-
-    C_Res C_GetSimulationParams(sim_params *params)
-    {
-        if (params == nullptr)
-        {
-            return C_Res::ERR;
-        }
-
-        *params = simulation.params;
-        return C_Res::OK;
-    }
-
-    C_Res C_SetSimulationResolution(int w, int h)
-    {
-        s_width = w;
-        s_height = h;
-        simulation.w = s_width;
-        simulation.h = s_height;
-        simulation.RestartSim();
-        return C_Res::OK;
-    }
-    C_Res C_RestartSimulation()
-    {
-        simulation.RestartSim();
         return C_Res::OK;
     }
 
@@ -248,118 +197,233 @@ namespace CodeCuda
         return C_Res::OK;
     }
 
-    C_Res C_AddRandomVelocity(int scale)
+    namespace FluidSimulation
     {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        int x = rand() % simulation.w;
-        int y = rand() % simulation.h;
 
-        int r = rand() % 3;
-
-        float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
-        float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
-
-        C_AddVelocity(x, y, r, vel_x, vel_y);
-        return C_Res::OK;
-    }
-    C_Res C_MapImageToSmoke(int w_source, int h_source, int element_offset, void *data)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.MapImageToSmoke(w_source, h_source, element_offset, data);
-        return C_Res::OK;
-    }
-    C_Res C_MapSolidMask(int w_source, int h_source, int *data)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.MapSolidMask(w_source, h_source, data);
-        return C_Res::OK;
-    }
-
-    C_Res C_MapVectorFieldUV(int w_source, int h_source, int element_offset, void *data)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.MapVectorFieldUV(w_source, h_source, element_offset, data);
-        return C_Res::OK;
-    }
-    C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float value_x, float value_y, float value_z, float density)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddSmoke(x_pos, y_pos, radius, code_math::vec4(value_x, value_y, value_z, density));
-        return C_Res::OK;
-    }
-    C_Res C_SetSolid(int x_pos, int y_pos, int radius, bool solid)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.SetSolid(x_pos, y_pos, radius, solid);
-        return C_Res::OK;
-    }
-    C_Res C_AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddVelocity(x_pos, y_pos, radius, vel_x, vel_y);
-        return C_Res::OK;
-    }
-
-    C_Res C_AddRadialVelocity(int x_pos, int y_pos, int radius, float scale)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddRadialVelocity(x_pos, y_pos, radius, scale);
-        return C_Res::OK;
-    }
-
-    C_Res C_AddVelocityGPU(int x_pos, int y_pos, int radius, float vel_x, float vel_y,
-                           CodeCudaContext *code_cuda_context)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddVelocityGPU(x_pos, y_pos, radius, vel_x, vel_y, code_cuda_context->stream);
-        return C_Res::OK;
-    }
-
-    C_Res C_AddSmokeGPU(int x_pos, int y_pos, int radius, float val_x, float val_y, float val_z, float density,
-                        CodeCudaContext *code_cuda_context)
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        simulation.AddSmokeGPU(x_pos, y_pos, radius, code_math::vec4(val_x, val_y, val_z, density), code_cuda_context->stream);
-        return C_Res::OK;
-    }
-
-    C_Res C_AddVelocity()
-    {
-        assert(simulation.ready_to_run && "Simulation was not inited");
-        int x = rand() % simulation.w;
-        int y = rand() % simulation.h;
-
-        int r = rand() % 10;
-        int scale = rand() % 5;
-
-        float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
-        float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
-
-        if (simulation.sim_step_idx % 2 == 0)
+        C_Res C_SetDebugSimulation(bool val)
         {
-            simulation.AddVelocity(x, y, r, vel_x, vel_y);
+            simulation.params.debug = val;
+            return C_Res::OK;
         }
-        return C_Res::OK;
-    }
-    C_Res C_UpdateSimCPU()
-    {
-        if (!simulation.ready_to_run)
-        {
-            simulation.InitGrid(s_width, s_height);
-        }
-        simulation.UpdateSimulationCPU();
-        return C_Res::OK;
-    }
 
-    C_Res C_UpdateSimGPU(CodeCudaContext *code_cuda_context)
-    {
-        if (!simulation.ready_to_run)
+        C_Res C_SetSimulationParams(const sim_params *params)
         {
-            simulation.InitGrid(s_width, s_height);
+            if (params == nullptr)
+            {
+                return C_Res::ERR;
+            }
+
+            simulation.params = *params;
+            return C_Res::OK;
         }
-        simulation.UpdateSimulationGPU(code_cuda_context->stream);
-        return C_Res::OK;
-    }
+
+        C_Res C_GetSimulationParams(sim_params *params)
+        {
+            if (params == nullptr)
+            {
+                return C_Res::ERR;
+            }
+
+            *params = simulation.params;
+            return C_Res::OK;
+        }
+
+        C_Res C_SetSimulationResolution(int w, int h)
+        {
+            s_width = w;
+            s_height = h;
+            simulation.w = s_width;
+            simulation.h = s_height;
+            simulation.RestartSim();
+            return C_Res::OK;
+        }
+        C_Res C_RestartSimulation()
+        {
+            simulation.RestartSim();
+            return C_Res::OK;
+        }
+
+
+        C_Res C_AddRandomVelocity(int scale)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            int x = rand() % simulation.w;
+            int y = rand() % simulation.h;
+
+            int r = rand() % 3;
+
+            float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
+            float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
+
+            C_AddVelocity(x, y, r, vel_x, vel_y);
+            return C_Res::OK;
+        }
+        C_Res C_MapImageToSmoke(int w_source, int h_source, int element_offset, void *data)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.MapImageToSmoke(w_source, h_source, element_offset, data);
+            return C_Res::OK;
+        }
+        C_Res C_MapSolidMask(int w_source, int h_source, int *data)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.MapSolidMask(w_source, h_source, data);
+            return C_Res::OK;
+        }
+
+        C_Res C_MapVectorFieldUV(int w_source, int h_source, int element_offset, void *data)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.MapVectorFieldUV(w_source, h_source, element_offset, data);
+            return C_Res::OK;
+        }
+        C_Res C_AddSmoke(int x_pos, int y_pos, int radius, float value_x, float value_y, float value_z, float density)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.AddSmoke(x_pos, y_pos, radius, code_math::vec4(value_x, value_y, value_z, density));
+            return C_Res::OK;
+        }
+        C_Res C_SetSolid(int x_pos, int y_pos, int radius, bool solid)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.SetSolid(x_pos, y_pos, radius, solid);
+            return C_Res::OK;
+        }
+        C_Res C_AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.AddVelocity(x_pos, y_pos, radius, vel_x, vel_y);
+            return C_Res::OK;
+        }
+
+        C_Res C_AddRadialVelocity(int x_pos, int y_pos, int radius, float scale)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.AddRadialVelocity(x_pos, y_pos, radius, scale);
+            return C_Res::OK;
+        }
+
+        C_Res C_AddVelocityGPU(int x_pos, int y_pos, int radius, float vel_x, float vel_y,
+                               CodeCudaContext *code_cuda_context)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.AddVelocityGPU(x_pos, y_pos, radius, vel_x, vel_y, code_cuda_context->stream);
+            return C_Res::OK;
+        }
+
+        C_Res C_AddSmokeGPU(int x_pos, int y_pos, int radius, float val_x, float val_y, float val_z, float density,
+                            CodeCudaContext *code_cuda_context)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.AddSmokeGPU(x_pos, y_pos, radius, code_math::vec4(val_x, val_y, val_z, density),
+                                   code_cuda_context->stream);
+            return C_Res::OK;
+        }
+
+        C_Res C_AddVelocity()
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            int x = rand() % simulation.w;
+            int y = rand() % simulation.h;
+
+            int r = rand() % 10;
+            int scale = rand() % 5;
+
+            float vel_x = (float(rand() % 100) / 100.0f) * float(scale);
+            float vel_y = (float(rand() % 100) / 100.0f) * float(scale);
+
+            if (simulation.sim_step_idx % 2 == 0)
+            {
+                simulation.AddVelocity(x, y, r, vel_x, vel_y);
+            }
+            return C_Res::OK;
+        }
+        C_Res C_UpdateSimCPU()
+        {
+            if (!simulation.ready_to_run)
+            {
+                simulation.InitGrid(s_width, s_height);
+            }
+            simulation.UpdateSimulationCPU();
+            return C_Res::OK;
+        }
+
+        kernel_launcher &C_GetKernelLauncherMappers(int type)
+        {
+            static kernel_launcher simulation_smoke_mapper_launcher = {};
+            if (!simulation_smoke_mapper_launcher.valid)
+            {
+                simulation_smoke_mapper_launcher.SetKernelFunct(
+                    [](CodeCudaContext *ctx)
+                    {
+                        // simulation.UpdateSimDeviceOnly(stream);
+                        if (!simulation.ready_to_run)
+                        {
+                            simulation.InitGrid(FluidSimulation::s_width, FluidSimulation::s_height);
+                        }
+                        simulation.UpdateSimulation(ctx->stream);
+                        dim3 grid((1024 * 1024) / 128, 1, 1);
+                        dim3 block(128, 1, 1);
+                        // we usse pressure input since the input is always the last output because we do double
+                        // buffering for pressures code_kernels::code_tests::k_simulation_edges_mapping<<<grid, block,
+                        // 0, stream>>>(
+                        //     1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
+                        //     simulation.edges_view.v_output, simulation.cells_view.divs,
+                        //     simulation.cells_view.pressures_input, simulation.cells_view.smoke_output,
+                        //     simulation.cells_view.is_walls, (float*)(this->mappedPtr));
+
+                        code_kernels::code_tests::k_simulation_cells_mapping<<<grid, block, 0, ctx->stream>>>(
+                            1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
+                            simulation.edges_view.v_output, simulation.cells_view.divs,
+                            simulation.cells_view.pressures_input, simulation.cells_view.smoke_output,
+                            simulation.cells_view.is_walls, (code_math::vec4 *)(ctx->mappedPtr));
+                    });
+            }
+            static kernel_launcher simulation_velocity_mapper = {};
+            if (!simulation_velocity_mapper.valid)
+            {
+                simulation_velocity_mapper.SetKernelFunct(
+                    [](CodeCudaContext *ctx)
+                    {
+                        // simulation.UpdateSimDeviceOnly(stream);
+                        if (!simulation.ready_to_run)
+                        {
+                            simulation.InitGrid(FluidSimulation::s_width, FluidSimulation::s_height);
+                        }
+                        simulation.UpdateSimulation(ctx->stream);
+                        dim3 grid((1024 * 1024) / 128, 1, 1);
+                        dim3 block(128, 1, 1);
+                        // we usse pressure input since the input is always the last output because we do double
+                        // buffering for pressures
+                        code_kernels::code_tests::k_simulation_edges_mapping<<<grid, block, 0, ctx->stream>>>(
+                            1024 * 1024, simulation.w, simulation.h, simulation.edges_view.u_output,
+                            simulation.edges_view.v_output, simulation.cells_view.divs,
+                            simulation.cells_view.pressures_input, simulation.cells_view.is_walls,
+                            (float *)(ctx->mappedPtr));
+                    });
+            }
+            if (type == 0)
+            {
+                return simulation_smoke_mapper_launcher;
+            }
+            else if (type == 1)
+            {
+                return simulation_velocity_mapper;
+            }
+
+            return simulation_smoke_mapper_launcher;
+        };
+        C_Res C_UpdateSimGPU(CodeCudaContext *code_cuda_context)
+        {
+            if (!simulation.ready_to_run)
+            {
+                simulation.InitGrid(s_width, s_height);
+            }
+            simulation.UpdateSimulationGPU(code_cuda_context->stream);
+            return C_Res::OK;
+        }
+
+    } // namespace FluidSimulation
     C_Res C_Matmul(CodeCudaContext *code_cuda_context, const int M, const int N, const int K, const float *a,
                    const float *b, float *c)
     {
@@ -451,83 +515,83 @@ namespace CodeCuda
             using namespace code_kernels;
             add_kernel_launcher(
                 "naive_coalescent",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
+                [N, M, K, d_A, d_B, d_C](CodeCudaContext *ctx)
                 {
                     dim3 grid(ceil(double(N) / 32.0f), ceil(double(M) / 32.0f));
                     dim3 block(32, 32);
-                    k_matmul_naive<<<grid, block, 0, code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_naive<<<grid, block, 0, ctx->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
             add_kernel_launcher(
                 "smem",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
+                [N, M, K, d_A, d_B, d_C](CodeCudaContext *ctx)
                 {
                     dim3 grid(ceil(double(M) / 32.0f), ceil(double(N) / 32.0f));
                     dim3 block(32 * 32);
-                    k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2, code_cuda_context->stream>>>(
-                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_x_y<<<grid, block, block.x * sizeof(float) * 2, ctx->stream>>>(M, N, K, 1.0f, 0.0f, d_A,
+                                                                                            d_B, d_C);
                 },
                 kernels);
 
             add_kernel_launcher(
                 "b_tilling_col_tile",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
+                [N, M, K, d_A, d_B, d_C](CodeCudaContext *ctx)
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BK * BK)));
                     dim3 block(BM * BK);
-                    k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float),
-                                           code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_bt_col_tile<<<grid, block, (BN * BK + BK * BM) * sizeof(float), ctx->stream>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
             add_kernel_launcher(
                 "b_tilling_row_tile",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
+                [N, M, K, d_A, d_B, d_C](CodeCudaContext *ctx)
                 {
                     constexpr uint32_t BM = 64;
                     constexpr uint32_t BK = 8;
                     constexpr uint32_t BN = 64;
                     dim3 grid(ceil(double(M) / double(BM)), ceil(double(N) / double(BK * BK)));
                     dim3 block(BM * BK);
-                    k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
-                                           code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-                },
-                kernels);
-
-            add_kernel_launcher(
-                "b_tilling_2d",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
-                {
-                    constexpr uint32_t BM = 64;
-                    constexpr uint32_t BK = 8;
-                    constexpr uint32_t BN = 64;
-                    dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
-                    dim3 block(BK * BK);
-                    k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
-                                             code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
-                },
-                kernels);
-
-            add_kernel_launcher(
-                "b_tilling_2d_transposed",
-                [N, M, K, d_A, d_B, d_C](cudaStream_t stream)
-                {
-                    constexpr uint32_t BM = 64;
-                    constexpr uint32_t BK = 8;
-                    constexpr uint32_t BN = 64;
-                    dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
-                    dim3 block(BK * BK);
-                    k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float), stream>>>(
+                    k_matmul_bt_row_tile<<<grid, block, (BM * BK + BK * BN) * sizeof(float), ctx->stream>>>(
                         M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
             add_kernel_launcher(
+                "b_tilling_2d",
+                [N, M, K, d_A, d_B, d_C](CodeCudaContext *ctx)
+                {
+                    constexpr uint32_t BM = 64;
+                    constexpr uint32_t BK = 8;
+                    constexpr uint32_t BN = 64;
+                    dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
+                    dim3 block(BK * BK);
+                    k_matmul_bt_2d_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), ctx->stream>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                },
+                kernels);
+
+            add_kernel_launcher(
+                "b_tilling_2d_transposed",
+                [N, M, K, d_A, d_B, d_C](CodeCudaContext *ctx)
+                {
+                    constexpr uint32_t BM = 64;
+                    constexpr uint32_t BK = 8;
+                    constexpr uint32_t BN = 64;
+                    dim3 grid(ceil(double(N) / double(BK * BK)), ceil(double(M) / double(BK * BK)));
+                    dim3 block(BK * BK);
+                    k_matmul_bt_2d_tilling_transposed_a<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
+                                                          ctx->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                },
+                kernels);
+
+            add_kernel_launcher(
                 "warp_tilling",
-                [N, M, K, d_A, d_B, d_C, code_cuda_context](cudaStream_t)
+                [N, M, K, d_A, d_B, d_C](CodeCudaContext *ctx)
                 {
                     constexpr uint32_t BM = k_auto_tunning_params::BM;
                     constexpr uint32_t BK = k_auto_tunning_params::BK;
@@ -536,15 +600,15 @@ namespace CodeCuda
 
                     dim3 grid(ceil(double(N) / double(BN)), ceil(double(M) / double(BM)));
                     dim3 block(BSIZE);
-                    k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float),
-                                               code_cuda_context->stream>>>(M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
+                    k_matmul_bt_warp_tilling<<<grid, block, (BM * BK + BK * BN) * sizeof(float), ctx->stream>>>(
+                        M, N, K, 1.0f, 0.0f, d_A, d_B, d_C);
                 },
                 kernels);
 
 
             for (int i = 0; i < 5; ++i)
             {
-                kernels.at("warp_tilling").kernel(code_cuda_context->stream);
+                kernels.at("warp_tilling").Execute(code_cuda_context);
             }
             CODE_API::CW_GetLastError();
             CODE_API::CW_DeviceSynchronize();
@@ -552,7 +616,7 @@ namespace CodeCuda
             CODE_API::CW_EventRecord(start);
             for (int i = 0; i < runs; ++i)
             {
-                kernels.at("warp_tilling").kernel(code_cuda_context->stream);
+                kernels.at("warp_tilling").Execute(code_cuda_context);
             }
             CODE_API::CW_GetLastError();
 
@@ -587,7 +651,7 @@ namespace CodeCuda
 
             add_kernel_launcher(
                 "cublas",
-                [handle, N, M, K, alpha, d_B_cublas, d_A_cublas, beta, d_C_cublas](cudaStream_t)
+                [handle, N, M, K, alpha, d_B_cublas, d_A_cublas, beta, d_C_cublas](CodeCudaContext *ctx)
                 {
                     CUBLAS_CHECK(cublasSgemm_v2(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B_cublas, N,
                                                 d_A_cublas, K, &beta, d_C_cublas, N));
@@ -596,12 +660,12 @@ namespace CodeCuda
 
             for (int i = 0; i < 5; ++i)
             {
-                kernels.at("cublas").kernel(code_cuda_context->stream);
+                kernels.at("cublas").Execute(code_cuda_context);
             }
             CODE_API::CW_EventRecord(start_cublas);
             for (int i = 0; i < runs; ++i)
             {
-                kernels.at("cublas").kernel(code_cuda_context->stream);
+                kernels.at("cublas").Execute(code_cuda_context);
             }
             CODE_API::CW_EventRecord(stop_cublas);
             CODE_API::CW_EventSynchronize(stop_cublas);
