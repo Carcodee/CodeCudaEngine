@@ -25,7 +25,6 @@ namespace CodeCuda
 
     C_Res CodeCudaContext::C_Init()
     {
-        CODECUDA_PRINTLN("Starting CodeCudaEngine Init");
         CODE_API::CW_FreeZero();
 
         int device_count = 0;
@@ -56,9 +55,8 @@ namespace CodeCuda
 
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
-        CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
-        CODECUDA_PRINTLN("");
-        CODECUDA_PRINTLN("");
+        this->id = contexts_id_count++;
+        CODECUDA_PRINTLN("Initialized: CudaContext(id->", this->id, ")");
         return C_Res::OK;
     }
 
@@ -99,7 +97,6 @@ namespace CodeCuda
     }
     C_Res CodeCudaContext::C_InitFromExternalDevice(uint8_t *vkDeviceUUID, size_t UUID_SIZE)
     {
-        CODECUDA_PRINTLN("Starting CodeCudaEngine Init");
         CODE_API::CW_FreeZero();
 
         int current_device = 0;
@@ -138,10 +135,11 @@ namespace CodeCuda
         CODE_API::CW_SetDevice(current_device);
         CODE_API::CW_StreamCreate(&this->stream);
         this->initialized = true;
-
-        CODECUDA_PRINTLN("Initialized: CodeCudaEngine");
+        this->id = contexts_id_count++;
         CODECUDA_PRINTLN("GPU Device index: ", current_device, "\nName: ", device_prop.name,
                          " \nWith compute capability: ", device_prop.major, device_prop.minor);
+        CODECUDA_PRINTLN("Initialized: CudaContext(id->", this->id, ")");
+        
         return C_Res::OK;
     }
 
@@ -188,8 +186,14 @@ namespace CodeCuda
             return C_Res::ERR;
 
         CODE_API::CW_StreamSynchronize(this->stream);
+
+        if (this->mappedPtr)
+        {
+            CODE_API::CW_Free(mappedPtr);
+        }
+        CODE_API::CW_DestroyExternalSemaphore(this->external_semaphore);
         CODE_API::CW_StreamDestroy(this->stream);
-        simulation.FreeSim();
+        
 
         this->stream = nullptr;
         this->device = -1;
@@ -340,10 +344,6 @@ namespace CodeCuda
         }
         C_Res C_UpdateSimCPU()
         {
-            if (!simulation.ready_to_run)
-            {
-                simulation.InitGrid(s_width, s_height);
-            }
             simulation.UpdateSimulationCPU();
             return C_Res::OK;
         }
@@ -357,10 +357,6 @@ namespace CodeCuda
                     [](CodeCudaContext *ctx)
                     {
                         // simulation.UpdateSimDeviceOnly(stream);
-                        if (!simulation.ready_to_run)
-                        {
-                            simulation.InitGrid(FluidSimulation::s_width, FluidSimulation::s_height);
-                        }
                         simulation.UpdateSimulation(ctx->stream);
                         dim3 grid((1024 * 1024) / 128, 1, 1);
                         dim3 block(128, 1, 1);
@@ -386,10 +382,6 @@ namespace CodeCuda
                     [](CodeCudaContext *ctx)
                     {
                         // simulation.UpdateSimDeviceOnly(stream);
-                        if (!simulation.ready_to_run)
-                        {
-                            simulation.InitGrid(FluidSimulation::s_width, FluidSimulation::s_height);
-                        }
                         simulation.UpdateSimulation(ctx->stream);
                         dim3 grid((1024 * 1024) / 128, 1, 1);
                         dim3 block(128, 1, 1);
@@ -415,10 +407,6 @@ namespace CodeCuda
         };
         C_Res C_UpdateSimGPU(CodeCudaContext *code_cuda_context)
         {
-            if (!simulation.ready_to_run)
-            {
-                simulation.InitGrid(s_width, s_height);
-            }
             simulation.UpdateSimulationGPU(code_cuda_context->stream);
             return C_Res::OK;
         }
@@ -460,6 +448,18 @@ namespace CodeCuda
         CODE_API::CW_Free(d_B);
         CODE_API::CW_Free(d_C);
 
+        return C_Res::OK;
+    }
+    C_Res C_InitEngine()
+    {
+        CODECUDA_PRINTLN("CudaEngine Started");
+        simulation.InitGrid(FluidSimulation::s_width, FluidSimulation::s_height);
+        return C_Res::OK;
+    }
+    C_Res C_ShutDownEngine()
+    {
+        CODECUDA_PRINTLN("CudaEngine Shutdown");
+        simulation.FreeSim();
         return C_Res::OK;
     }
 
