@@ -312,15 +312,18 @@ namespace CodeBenchmarking
 
 
 } // namespace CodeBenchmarking
-namespace CodeCuda::FluidSimulation 
+namespace CodeCuda::FluidSimulation
 {
+
+    inline constexpr float epsilon = 1e-4f;
     using namespace code_math;
     using sim_params = sim_params;
     struct c_cells
     {
+        std::vector<vec4> smoke;
+        std::vector<vec2> solid_speeds;
         std::vector<float> divs;
         std::vector<float> pressures;
-        std::vector<vec4> smoke;
         std::vector<uint8_t> is_walls;
         std::vector<uint8_t> edges_states_count;
         int valid_cell_count = 0;
@@ -334,6 +337,7 @@ namespace CodeCuda::FluidSimulation
             divs.resize(w * h);
             pressures.resize(w * h);
             is_walls.resize(w * h);
+            solid_speeds.resize(w * h);
             smoke.resize(w * h);
             edges_states_count.resize(w * h);
             valid_cell_count = 0;
@@ -355,6 +359,7 @@ namespace CodeCuda::FluidSimulation
                 {
                     valid_cell_count++;
                 }
+                solid_speeds[i] = vec2(0.0, 0.0);
             }
         }
         void Reset()
@@ -363,6 +368,7 @@ namespace CodeCuda::FluidSimulation
             this->h = h;
             divs.clear();
             pressures.clear();
+            solid_speeds.clear();
             is_walls.clear();
             smoke.clear();
             edges_states_count.clear();
@@ -474,9 +480,10 @@ namespace CodeCuda::FluidSimulation
     struct c_cells_view
     {
 
-        float *divs = nullptr;
         vec4 *smoke_input = nullptr;
         vec4 *smoke_output = nullptr;
+        vec2 *solid_speeds = nullptr;
+        float *divs = nullptr;
         float *pressures_input = nullptr;
         float *pressures_output = nullptr;
         uint8_t *is_walls = nullptr;
@@ -499,7 +506,7 @@ namespace CodeCuda::FluidSimulation
     };
     namespace CodeSimulationDevice
     {
-        __device__ float &GetCellPressure(int x, int y, int w, int h,float *pressures)
+        __device__ float &GetCellPressure(int x, int y, int w, int h, float *pressures)
         {
             if (x < 0 || y < 0 || x >= w || y >= h)
             {
@@ -517,13 +524,23 @@ namespace CodeCuda::FluidSimulation
             return values[y * w + x];
         }
 
-        __device__ float GetCellFluidState(int x, int y, int w, int h, uint8_t *is_walls)
+        __device__ float GetCellFluidState(int x, int y, int w, int h, uint8_t *is_walls, vec2 *solid_vel = nullptr)
         {
             if (x < 0 || y < 0 || x >= w || y >= h)
             {
                 return 0.0f;
             }
-            return is_walls[y * w + x] ? 0.0f : 1.0f;
+            // if (solid_vel != nullptr)
+            // {
+            //     return is_walls[y * w + x] == 1 && solid_vel[y * w + x].x < epsilon && solid_vel[y * w + x].y < epsilon
+            //         ? 0.0f
+            //         : 1.0f;
+            // }
+            // else
+            // {
+            //     return is_walls[y * w + x] == 1 ? 0.0f : 1.0f;
+            // }
+                return is_walls[y * w + x] == 1 ? 0.0f : 1.0f;
         }
 
         __device__ uint8_t &GetCellEdgesStateCount(int x, int y, int w, uint8_t *edges_states)
@@ -610,7 +627,7 @@ namespace CodeCuda::FluidSimulation
             return (tl_v + tr_v + bl_v + br_v) * 0.25f;
         }
 
-        __global__ void k_apply_forces(int size, float wind, float g, float density, float dx, float dt,
+        __global__ void k_apply_forces(int size, float wind, float g, float diffusion_factor, float dt,
                                        c_cells_view cells_data, c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -621,11 +638,11 @@ namespace CodeCuda::FluidSimulation
             int x = idx % edges_view.edges_w;
             int y = idx / edges_view.edges_w;
 
-
             if (edges_view.is_walls_u[idx] == 0)
             {
                 if (!(x == 0 || x == cells_data.w - 1 || y == 0 || y == cells_data.h - 1))
                 {
+                    edges_view.u_output[idx] *= (1.0f - diffusion_factor);
                     edges_view.u_output[idx] += acc * dt;
                 }
             }
@@ -633,6 +650,7 @@ namespace CodeCuda::FluidSimulation
             {
                 if (!(x == 0 || x == cells_data.w - 1 || y == 0 || y == cells_data.h - 1))
                 {
+                    edges_view.v_output[idx] *= (1.0f - diffusion_factor);
                     edges_view.v_output[idx] += g * dt;
                 }
             }
@@ -697,7 +715,7 @@ namespace CodeCuda::FluidSimulation
             {
                 return;
             }
-            
+
             float d = smoke_diffuse_coef;
             if (GetCellSmoke(x - 1, y, cells_data.w, cells_data.h, cells_data.smoke_output).w > 0.5)
             {
@@ -744,13 +762,13 @@ namespace CodeCuda::FluidSimulation
             int edge_u_right_out_idx = -1;
             int edge_v_top_out_idx = -1;
             int edge_v_bottom_out_idx = -1;
-            float press_l = GetCellPressure(x - 1, y, cells_data.w, cells_data.h,cells_data.pressures_input) *
+            float press_l = GetCellPressure(x - 1, y, cells_data.w, cells_data.h, cells_data.pressures_input) *
                 GetCellFluidState(x - 1, y, cells_data.w, cells_data.h, cells_data.is_walls);
-            float press_r = GetCellPressure(x + 1, y, cells_data.w, cells_data.h,cells_data.pressures_input) *
+            float press_r = GetCellPressure(x + 1, y, cells_data.w, cells_data.h, cells_data.pressures_input) *
                 GetCellFluidState(x + 1, y, cells_data.w, cells_data.h, cells_data.is_walls);
-            float press_t = GetCellPressure(x, y + 1, cells_data.w, cells_data.h,cells_data.pressures_input) *
+            float press_t = GetCellPressure(x, y + 1, cells_data.w, cells_data.h, cells_data.pressures_input) *
                 GetCellFluidState(x, y + 1, cells_data.w, cells_data.h, cells_data.is_walls);
-            float press_b = GetCellPressure(x, y - 1, cells_data.w, cells_data.h,cells_data.pressures_input) *
+            float press_b = GetCellPressure(x, y - 1, cells_data.w, cells_data.h, cells_data.pressures_input) *
                 GetCellFluidState(x, y - 1, cells_data.w, cells_data.h, cells_data.is_walls);
 
             GetCellEdgesIdxs(x, y, edges_view.edges_w, edge_u_left_out_idx, edge_u_right_out_idx, edge_v_top_out_idx,
@@ -771,7 +789,7 @@ namespace CodeCuda::FluidSimulation
             cells_data.pressures_output[idx] = pressure_new;
         }
 
-        __global__ void k_simulation_update_velocities_u(int size, float dt, float k, float diffusion_factor,
+        __global__ void k_simulation_update_velocities_u(int size, float dt, float k,
                                                          c_cells_view cells_data, c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -786,10 +804,11 @@ namespace CodeCuda::FluidSimulation
             // }
             if (edges_view.is_walls_u[idx] == 0)
             {
-                float press_r = GetCellPressure(x, y, cells_data.w, cells_data.h,cells_data.pressures_input) * GetCellFluidState(x, y, cells_data.w, cells_data.h,cells_data.is_walls);
-                float press_l = GetCellPressure(x - 1, y, cells_data.w, cells_data.h,cells_data.pressures_input) * GetCellFluidState(x - 1, y, cells_data.w, cells_data.h,cells_data.is_walls);
+                float press_r = GetCellPressure(x, y, cells_data.w, cells_data.h, cells_data.pressures_input) *
+                    GetCellFluidState(x, y, cells_data.w, cells_data.h, cells_data.is_walls);
+                float press_l = GetCellPressure(x - 1, y, cells_data.w, cells_data.h, cells_data.pressures_input) *
+                    GetCellFluidState(x - 1, y, cells_data.w, cells_data.h, cells_data.is_walls);
                 edges_view.u_output[idx] = edges_view.u_output[idx] - (k * (press_r - press_l));
-                edges_view.u_output[idx] *= (1.0 - diffusion_factor);
             }
             else
             {
@@ -798,7 +817,7 @@ namespace CodeCuda::FluidSimulation
         }
 
         __global__ void k_simulation_update_velocities_v(int size, float dt, float gravity, float k,
-                                                         float diffusion_factor, c_cells_view cells_data,
+                                                         c_cells_view cells_data,
                                                          c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -809,10 +828,11 @@ namespace CodeCuda::FluidSimulation
             int y = idx / edges_view.edges_w;
             if (edges_view.is_walls_v[idx] == 0)
             {
-                float press_t = GetCellPressure(x, y, cells_data.w, cells_data.h,cells_data.pressures_input) * GetCellFluidState(x, y, cells_data.w, cells_data.h,cells_data.is_walls);
-                float press_b = GetCellPressure(x, y - 1, cells_data.w, cells_data.h,cells_data.pressures_input) * GetCellFluidState(x, y - 1, cells_data.w, cells_data.h,cells_data.is_walls);
+                float press_t = GetCellPressure(x, y, cells_data.w, cells_data.h, cells_data.pressures_input) *
+                    GetCellFluidState(x, y, cells_data.w, cells_data.h, cells_data.is_walls);
+                float press_b = GetCellPressure(x, y - 1, cells_data.w, cells_data.h, cells_data.pressures_input) *
+                    GetCellFluidState(x, y - 1, cells_data.w, cells_data.h, cells_data.is_walls);
                 edges_view.v_output[idx] = edges_view.v_output[idx] - (k * (press_t - press_b));
-                edges_view.v_output[idx] *= (1.0 - diffusion_factor);
             }
             else
             {
@@ -886,8 +906,8 @@ namespace CodeCuda::FluidSimulation
             int b = -1;
             int t = -1;
             GetCellEdgesIdxs(x, y, edges_view.edges_w, l, r, b, t);
-            float u = (edges_view.u_input[l] + edges_view.u_input[r]) * 0.5f;
-            float v = (edges_view.v_input[b] + edges_view.v_input[t]) * 0.5f;
+            float u = (edges_view.u_output[l] + edges_view.u_output[r]) * 0.5f;
+            float v = (edges_view.v_output[b] + edges_view.v_output[t]) * 0.5f;
 
             float pos[2] = {float(x), float(y)};
             float x_pos = pos[0] - u * dt / dx;
@@ -978,6 +998,68 @@ namespace CodeCuda::FluidSimulation
 
             cells_view.smoke_output[cell_idx] += value;
         }
+
+        __global__ void k_simulation_add_pressure(int size, int x_pos, int y_pos, int radius, float value,
+                                                  c_cells_view cells_view)
+        {
+            const uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx >= size)
+            {
+                return;
+            }
+
+            const int diameter = radius * 2;
+
+            const int local_x = int(idx % diameter) - radius;
+            const int local_y = int(idx / diameter) - radius;
+
+            const int x = x_pos + local_x;
+            const int y = y_pos + local_y;
+
+            if (x < 0 || x >= cells_view.w || y < 0 || y >= cells_view.h)
+            {
+                return;
+            }
+
+            const int sq_dist = local_x * local_x + local_y * local_y;
+            const int radius_sq = radius * radius;
+
+            if (sq_dist >= radius_sq)
+            {
+                return;
+            }
+
+            const int cell_idx = y * cells_view.w + x;
+
+            if (cells_view.is_walls[cell_idx])
+            {
+                return;
+            }
+
+            cells_view.pressures_input[cell_idx] += value;
+        }
+
+        __global__ void k_simulation_update_speeds_based_on_solids(int size, c_cells_view cells_view,
+                                                                   c_edges_view edges_view)
+        {
+            uint32_t idx = blockDim.x * blockIdx.x + threadIdx.x;
+            if (idx > size)
+            {
+                return;
+            }
+            uint32_t x = idx % cells_view.w;
+            uint32_t y = idx / cells_view.w;
+            int l = -1;
+            int r = -1;
+            int t = -1;
+            int b = -1;
+            GetCellEdgesIdxs(x, y, cells_view.w, l, r, t, b);
+            vec2 &speed = cells_view.solid_speeds[idx];
+            edges_view.u_output[l] = speed.x;
+            edges_view.u_output[r] = speed.x;
+            edges_view.u_output[b] = speed.y;
+            edges_view.u_output[t] = speed.y;
+        }
     } // namespace CodeSimulationDevice
 
     struct c_grid
@@ -1001,7 +1083,6 @@ namespace CodeCuda::FluidSimulation
         }
         void InitSolids()
         {
-
             // First pass: mark all solid-cell edges.
             for (int i = 0; i < cells_data.pressures.size(); ++i)
             {
@@ -1138,6 +1219,7 @@ namespace CodeCuda::FluidSimulation
             cells_view.w = w;
             cells_view.h = h;
             CODE_API::CW_Malloc(&cells_view.divs, sizeof(float) * cell_count);
+            CODE_API::CW_Malloc(&cells_view.solid_speeds, sizeof(vec2) * cell_count);
             CODE_API::CW_Malloc(&cells_view.smoke_input, sizeof(vec4) * cell_count);
             CODE_API::CW_Malloc(&cells_view.smoke_output, sizeof(vec4) * cell_count);
             CODE_API::CW_Malloc(&cells_view.pressures_input, sizeof(float) * cell_count);
@@ -1156,6 +1238,8 @@ namespace CodeCuda::FluidSimulation
             CODE_API::CW_Malloc(&edges_view.is_walls_v, sizeof(uint8_t) * edge_count);
 
             CODE_API::CW_Memcpy(cells_view.divs, cells_data.divs.data(), sizeof(float) * cell_count,
+                                cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(cells_view.solid_speeds, cells_data.solid_speeds.data(), sizeof(vec2) * cell_count,
                                 cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(cells_view.smoke_input, cells_data.smoke.data(), sizeof(vec4) * cell_count,
                                 cudaMemcpyHostToDevice);
@@ -1190,6 +1274,8 @@ namespace CodeCuda::FluidSimulation
             int edge_count = edge_w * edge_h;
             CODE_API::CW_Memcpy(cells_view.divs, cells_data.divs.data(), sizeof(float) * cell_count,
                                 cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(cells_view.solid_speeds, cells_data.solid_speeds.data(), sizeof(float) * cell_count,
+                                cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(cells_view.is_walls, cells_data.is_walls.data(), sizeof(uint8_t) * cell_count,
                                 cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(cells_view.edges_states_count, cells_data.edges_states_count.data(),
@@ -1214,6 +1300,8 @@ namespace CodeCuda::FluidSimulation
 
             CODE_API::CW_Memcpy(cells_data.divs.data(), cells_view.divs, sizeof(float) * cell_count,
                                 cudaMemcpyDeviceToHost);
+            CODE_API::CW_Memcpy(cells_data.solid_speeds.data(), cells_view.solid_speeds, sizeof(float) * cell_count,
+                                cudaMemcpyDeviceToHost);
             CODE_API::CW_Memcpy(cells_data.is_walls.data(), cells_view.is_walls, sizeof(uint8_t) * cell_count,
                                 cudaMemcpyDeviceToHost);
             CODE_API::CW_Memcpy(cells_data.edges_states_count.data(), cells_view.edges_states_count,
@@ -1233,6 +1321,7 @@ namespace CodeCuda::FluidSimulation
         void ClearViews()
         {
             CODE_API::CW_Free(cells_view.divs);
+            CODE_API::CW_Free(cells_view.solid_speeds);
             CODE_API::CW_Free(cells_view.pressures_input);
             CODE_API::CW_Free(cells_view.pressures_output);
             CODE_API::CW_Free(cells_view.smoke_input);
@@ -1258,7 +1347,7 @@ namespace CodeCuda::FluidSimulation
 
         void UpdateSimulation(cudaStream_t stream = nullptr)
         {
-            
+
             if (params.gpu_sim)
             {
                 UpdateSimulationGPU(stream);
@@ -1279,14 +1368,14 @@ namespace CodeCuda::FluidSimulation
         void ApplyForcesGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
-            dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
+            dim3 grid((edges_view.edges_w * edges_view.edges_h + block.x - 1) / block.x, 1, 1);
             CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(
-                w * h, params.wind_speed, params.g, params.density, dx, params.dt, cells_view, edges_view);
+                edges_view.edges_w * edges_view.edges_h, params.wind_speed, params.g, params.velocity_dissipation, params.dt, cells_view, edges_view);
         }
         void DiffuseGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
-            dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
+            dim3 grid((edges_view.edges_w * edges_view.edges_h + block.x - 1) / block.x, 1, 1);
             for (int i = 0; i < params.total_iter_gpu; ++i)
             {
                 CodeSimulationDevice::k_diffuse<<<grid, block, 0, stream>>>(edge_h * edge_w, params.viscosity,
@@ -1309,14 +1398,50 @@ namespace CodeCuda::FluidSimulation
                 std::swap(cells_view.pressures_input, cells_view.pressures_output);
             }
         }
+        void BeginSolidUpdate(cudaStream_t stream)
+        {
+            int cell_count = w * h;
+            if (solid_update_requested)
+            {
+
+                CODE_API::CW_Memcpy(cells_view.solid_speeds, cells_data.solid_speeds.data(), sizeof(float) * cell_count,
+                                    cudaMemcpyHostToDevice);
+                dim3 block(1024, 1, 1);
+                dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
+                CodeSimulationDevice::k_simulation_update_speeds_based_on_solids<<<grid, block, 0, stream>>>(
+                    cell_count, cells_view, edges_view);
+            }
+        }
+        void FinalizeSolidUpdate(cudaStream_t stream)
+        {
+            if (solid_update_requested)
+            {
+                // CopyHostToDevice(cells_view.pressures_input, cells_view.smoke_output, edges_view.u_output,
+                //                  edges_view.v_output);
+                solid_update_requested = false;
+            }
+        }
+
         void UpdateSimulationGPU(cudaStream_t stream)
         {
+            // BeginSolidUpdate(stream);
+            // vel output is stored in u_output
             ApplyForcesGPU(stream);
+            // vel output is stored in u_output
             DiffuseGPU(stream);
+            // vel output is stored in u_output
             ProjectionGPU(stream);
-            AdvectVelocityGPU(stream);
-            ProjectionGPU(stream);
+            // vel output is stored in u_output
             UpdateVelocityGPU(stream);
+            // vel output is stored in u_output
+            AdvectVelocityGPU(stream);
+            // vel output is stored in u_output
+            ProjectionGPU(stream);
+            // vel output is stored in u_output
+            UpdateVelocityGPU(stream);
+            // vel output is stored in u_output
+
+            // FinalizeSolidUpdate(stream);
 
             AdvectSmokeGPU(stream);
             DiffuseSmokeGPU(stream);
@@ -1327,6 +1452,7 @@ namespace CodeCuda::FluidSimulation
                                  edges_view.v_output);
                 ProjectionResults(params.total_iter_gpu);
             }
+
             UpdateData();
         }
 
@@ -1577,6 +1703,48 @@ namespace CodeCuda::FluidSimulation
             }
         }
 
+        void AddPressure(int x_pos, int y_pos, int radius, float value)
+        {
+            if (x_pos < 0 || x_pos >= w || y_pos < 0 || y_pos >= h || radius <= 0)
+            {
+                CODECUDA_PRINTLN("Invalid AddPressure parameters");
+                return;
+            }
+            if (params.gpu_sim)
+            {
+                CopyDeviceToHost(cells_view.pressures_input, cells_view.smoke_output, edges_view.u_output,
+                                 edges_view.v_output);
+            }
+            for (int y = -radius; y < radius; ++y)
+            {
+                for (int x = -radius; x < radius; ++x)
+                {
+                    const int x_final = x + x_pos;
+                    const int y_final = y + y_pos;
+                    if (x_final < 0 || x_final >= w || y_final < 0 || y_final >= h)
+                    {
+                        continue;
+                    }
+                    const int sq_dist = x * x + y * y;
+                    if (sq_dist >= radius * radius)
+                    {
+                        continue;
+                    }
+                    const int idx = y_final * w + x_final;
+                    if (cells_data.is_walls[idx])
+                    {
+                        continue;
+                    }
+                    cells_data.pressures[idx] += value;
+                }
+            }
+            if (params.gpu_sim)
+            {
+                CopyHostToDevice(cells_view.pressures_input, cells_view.smoke_output, edges_view.u_output,
+                                 edges_view.v_output);
+            }
+        }
+
 
         void MapSolidMask(int source_w, int source_h, int *mask)
         {
@@ -1676,7 +1844,8 @@ namespace CodeCuda::FluidSimulation
                                  edges_view.v_output);
             }
         }
-        void SetSolid(int x_pos, int y_pos, int radius, bool solid)
+
+        void SetSolidWithSpeed(int x_pos, int y_pos, int radius, bool solid)
         {
             if (x_pos < 0 || x_pos >= w || y_pos < 0 || y_pos >= h)
             {
@@ -1730,7 +1899,65 @@ namespace CodeCuda::FluidSimulation
                     static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
                                          edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
             }
-            // UpdateSolids(solid);
+        }
+        void SetSolid(int x_pos, int y_pos, int radius, bool solid)
+        {
+            if (x_pos < 0 || x_pos >= w || y_pos < 0 || y_pos >= h)
+            {
+                CODECUDA_PRINTLN("Invalid x,y pos");
+                return;
+            }
+            if (params.gpu_sim)
+            {
+                CopyDeviceToHost(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
+                                 edges_view.v_output);
+            }
+            for (int y = -radius; y < radius; ++y)
+            {
+                for (int x = -radius; x < radius; ++x)
+                {
+                    int x_final = x + x_pos;
+                    int y_final = y + y_pos;
+                    if (x_final < 0 || x_final >= w || y_final < 0 || y_final >= h)
+                    {
+                        continue;
+                    }
+                    int sq_dist = pow(x_final - x_pos, 2.0f) + pow(y_final - y_pos, 2.0f);
+                    if (sq_dist >= radius * radius)
+                    {
+                        continue;
+                    }
+                    vec2 speed = vec2(x_final - x_pos, y_final - y);
+                    int idx = y_final * w + x_final;
+                    cells_data.is_walls[idx] = solid ? 1 : 0;
+                    cells_data.solid_speeds[idx] = speed * dx;
+                    int x_cells = idx % w;
+                    int y_cells = idx / w;
+
+                    int u_left;
+                    int u_right;
+                    int v_top;
+                    int v_bottom;
+                    GetCellEdgesIdxs(x_cells, y_cells, u_left, u_right, v_top, v_bottom);
+
+                    edges_data.is_walls_u[u_left] = cells_data.is_walls[idx];
+                    edges_data.is_walls_u[u_right] = cells_data.is_walls[idx];
+                    edges_data.is_walls_v[v_top] = cells_data.is_walls[idx];
+                    edges_data.is_walls_v[v_bottom] = cells_data.is_walls[idx];
+                }
+            }
+
+            for (int i = 0; i < cells_data.pressures.size(); ++i)
+            {
+                int x = i % w;
+                int y = i / w;
+
+                cells_data.edges_states_count[i] =
+                    static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
+                                         edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
+            }
+            UpdateSolids(solid);
+
             if (params.gpu_sim)
             {
                 CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
@@ -1824,6 +2051,26 @@ namespace CodeCuda::FluidSimulation
 
             CodeSimulationDevice::k_simulation_add_smoke<<<grid, block, 0, stream>>>(size, x_pos, y_pos, radius, value,
                                                                                      cells_view);
+        }
+
+        void AddPressureGPU(int x_pos, int y_pos, int radius, float value, cudaStream_t stream)
+        {
+            if (x_pos < 0 || x_pos >= w || y_pos < 0 || y_pos >= h || radius <= 0)
+            {
+                CODECUDA_PRINTLN("Invalid AddPressureGPU parameters");
+                return;
+            }
+
+            const int diameter = radius * 2;
+            const int size = diameter * diameter;
+
+            constexpr int threads_per_block = 256;
+
+            const dim3 block(threads_per_block, 1, 1);
+            const dim3 grid((size + threads_per_block - 1) / threads_per_block, 1, 1);
+
+            CodeSimulationDevice::k_simulation_add_pressure<<<grid, block, 0, stream>>>(size, x_pos, y_pos, radius,
+                                                                                        value, cells_view);
         }
 
     private:
@@ -2006,10 +2253,10 @@ namespace CodeCuda::FluidSimulation
             dim3 grid((double(edge_w * edge_h) + 1023.0) / 1024.0, 1, 1);
             float k = params.dt / (params.density * dx);
             CodeSimulationDevice::k_simulation_update_velocities_u<<<grid, block, 0, stream>>>(
-                edge_w * edge_h, params.dt, k, params.velocity_dissipation, cells_view, edges_view);
+                edge_w * edge_h, params.dt, k, cells_view, edges_view);
             k = params.dt / (params.density * dy);
             CodeSimulationDevice::k_simulation_update_velocities_v<<<grid, block, 0, stream>>>(
-                edge_w * edge_h, params.dt, params.g, k, params.velocity_dissipation, cells_view, edges_view);
+                edge_w * edge_h, params.dt, params.g, k, cells_view, edges_view);
         }
         void UpdateVelocity()
         {
@@ -2251,7 +2498,6 @@ namespace CodeCuda::FluidSimulation
                       << '\n';
         }
 
-        const float epsilon = 0.0001f;
         float dx = 0.0f;
         float dy = 0.0f;
 
@@ -2268,8 +2514,9 @@ namespace CodeCuda::FluidSimulation
         int64_t sim_step_idx = 0;
         float total_t = 0.0f;
         sim_params params = {};
+        bool solid_update_requested = false;
     };
 
 
-} // namespace CodeSimulation
+} // namespace CodeCuda::FluidSimulation
 #endif // CODECOMMON_HPP

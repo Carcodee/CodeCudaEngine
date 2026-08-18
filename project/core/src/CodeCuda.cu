@@ -287,6 +287,12 @@ namespace CodeCuda
             simulation.AddSmoke(x_pos, y_pos, radius, code_math::vec4(value_x, value_y, value_z, density));
             return C_Res::OK;
         }
+        C_Res C_AddPressure(int x_pos, int y_pos, int radius, float value)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.AddPressure(x_pos, y_pos, radius, value);
+            return C_Res::OK;
+        }
         C_Res C_SetSolid(int x_pos, int y_pos, int radius, bool solid)
         {
             assert(simulation.ready_to_run && "Simulation was not inited");
@@ -321,6 +327,14 @@ namespace CodeCuda
             assert(simulation.ready_to_run && "Simulation was not inited");
             simulation.AddSmokeGPU(x_pos, y_pos, radius, code_math::vec4(val_x, val_y, val_z, density),
                                    code_cuda_context->stream);
+            return C_Res::OK;
+        }
+
+        C_Res C_AddPressureGPU(int x_pos, int y_pos, int radius, float value,
+                               CodeCudaContext *code_cuda_context)
+        {
+            assert(simulation.ready_to_run && "Simulation was not inited");
+            simulation.AddPressureGPU(x_pos, y_pos, radius, value, code_cuda_context->stream);
             return C_Res::OK;
         }
 
