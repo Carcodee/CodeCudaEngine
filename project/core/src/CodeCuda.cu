@@ -139,7 +139,7 @@ namespace CodeCuda
         CODECUDA_PRINTLN("GPU Device index: ", current_device, "\nName: ", device_prop.name,
                          " \nWith compute capability: ", device_prop.major, device_prop.minor);
         CODECUDA_PRINTLN("Initialized: CudaContext(id->", this->id, ")");
-        
+
         return C_Res::OK;
     }
 
@@ -162,9 +162,9 @@ namespace CodeCuda
 
         CODE_API::CW_ExternalMemoryGetMappedBuffer(&this->mappedPtr, cuda_external_memory, &buffer_desc);
         CODE_API::CW_DeviceSynchronize();
-        
+
         this->mapped_buffer_element_count = int(element_count);
-        
+
         return C_Res::OK;
     }
 
@@ -191,9 +191,15 @@ namespace CodeCuda
         {
             CODE_API::CW_Free(mappedPtr);
         }
-        CODE_API::CW_DestroyExternalSemaphore(this->external_semaphore);
-        CODE_API::CW_StreamDestroy(this->stream);
-        
+        if (this->external_semaphore)
+        {
+            CODE_API::CW_DestroyExternalSemaphore(this->external_semaphore);
+        }
+        if (this->stream)
+        {
+            CODE_API::CW_StreamDestroy(this->stream);
+        }
+
 
         this->stream = nullptr;
         this->device = -1;
@@ -330,8 +336,7 @@ namespace CodeCuda
             return C_Res::OK;
         }
 
-        C_Res C_AddPressureGPU(int x_pos, int y_pos, int radius, float value,
-                               CodeCudaContext *code_cuda_context)
+        C_Res C_AddPressureGPU(int x_pos, int y_pos, int radius, float value, CodeCudaContext *code_cuda_context)
         {
             assert(simulation.ready_to_run && "Simulation was not inited");
             simulation.AddPressureGPU(x_pos, y_pos, radius, value, code_cuda_context->stream);

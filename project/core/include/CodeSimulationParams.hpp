@@ -17,12 +17,12 @@ namespace CodeCuda
             float dt = 1.0f / 120.0f;
             int total_iter_cpu = 60;
             float g = -0.0f;
-            float wind_speed = 1.5f;
+            float wind_speed = 0.0f;
             float viscosity = 0.1f;
-            float smoke_diffuse_coef = 0.1f;
+            float smoke_diffuse_coef = 0.0f;
             bool debug = false;
             bool gpu_sim = true;
-            float smoke_dissipation = 0.00;
+            float smoke_dissipation = 0.001;
             float velocity_dissipation = 0.01;
         };
     } // namespace FluidSimulation

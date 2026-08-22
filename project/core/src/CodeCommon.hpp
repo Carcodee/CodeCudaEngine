@@ -326,7 +326,6 @@ namespace CodeCuda::FluidSimulation
         std::vector<float> pressures;
         std::vector<uint8_t> is_walls;
         std::vector<uint8_t> edges_states_count;
-        int valid_cell_count = 0;
         int w = -1;
         int h = -1;
 
@@ -336,11 +335,10 @@ namespace CodeCuda::FluidSimulation
             this->h = h;
             divs.resize(w * h);
             pressures.resize(w * h);
-            is_walls.resize(w * h);
+            is_walls.resize(w * h, 0);
             solid_speeds.resize(w * h);
             smoke.resize(w * h);
             edges_states_count.resize(w * h);
-            valid_cell_count = 0;
 
             // for (int i = 0; i < smoke.size(); ++i)
             // {
@@ -354,11 +352,7 @@ namespace CodeCuda::FluidSimulation
             {
                 int x = i % w;
                 int y = i / w;
-                is_walls[i] = IsSolidCell(x, y);
-                if (!is_walls[i])
-                {
-                    valid_cell_count++;
-                }
+                // is_walls[i] = IsBoundary(x, y);
                 solid_speeds[i] = vec2(0.0, 0.0);
             }
         }
@@ -372,7 +366,6 @@ namespace CodeCuda::FluidSimulation
             is_walls.clear();
             smoke.clear();
             edges_states_count.clear();
-            valid_cell_count = 0;
         }
         float GetCellFluidState(int x, int y)
         {
@@ -395,85 +388,102 @@ namespace CodeCuda::FluidSimulation
             return edges_states_count[y * w + x];
         }
 
-        bool IsSolidCell(int x, int y) const
+        [[nodiscard]]
+        uint8_t IsBoundary(int x, int y) const
         {
             if (x == 0 || x == w - 1 || y == 0 || y == h - 1)
             {
-                return true;
+                return 1;
             }
-
-            // const float px = (float(x) + 0.5f) / float(w);
-            // const float py = (float(y) + 0.5f) / float(h);
-            //
-            // const float dx = px - 0.5f;
-            // const float dy = py - 0.5f;
-            //
-            // constexpr float radius = 0.09f;
-            //
-            // return dx * dx + dy * dy <= radius * radius;
-            return false;
+            return 0;
         }
     };
     struct c_edges
     {
-        int edges_w;
-        int edges_h;
+        int edges_w_u = -1;
+        int edges_h_u = -1;
+        int edges_w_v = -1;
+        int edges_h_v = -1;
         std::vector<float> u;
         std::vector<float> v;
         std::vector<uint8_t> is_walls_u;
         std::vector<uint8_t> is_walls_v;
 
-        float &GetV(int x, int y) { return v[y * edges_w + x]; }
-        float &GetU(int x, int y) { return u[y * edges_w + x]; }
+        float &GetV(int x, int y) { return v[y * edges_w_v + x]; }
+        float &GetU(int x, int y) { return u[y * edges_w_u + x]; }
 
-        float GetStateU(int x, int y) { return is_walls_u[y * edges_w + x] == 1 ? 0.0f : 1.0f; }
-        float GetStateV(int x, int y) { return is_walls_v[y * edges_w + x] == 1 ? 0.0f : 1.0f; }
+        float GetStateU(int x, int y) { return is_walls_u[y * edges_w_u + x] == 1 ? 0.0f : 1.0f; }
+        float GetStateV(int x, int y) { return is_walls_v[y * edges_w_v + x] == 1 ? 0.0f : 1.0f; }
 
-        uint8_t &GetWallU(int x, int y) { return is_walls_u[y * edges_w + x]; }
+        uint8_t &GetWallU(int x, int y) { return is_walls_u[y * edges_w_u + x]; }
 
-        uint8_t &GetWallV(int x, int y) { return is_walls_v[y * edges_w + x]; }
-        void Resize(int w, int h)
+        uint8_t &GetWallV(int x, int y) { return is_walls_v[y * edges_w_v + x]; }
+        void Resize(int w_u, int h_u, int w_v, int h_v)
         {
-            this->edges_w = w;
-            this->edges_h = h;
-            u.resize(w * h);
-            v.resize(w * h);
-            is_walls_u.resize(w * h);
-            is_walls_v.resize(w * h);
+            edges_w_u = w_u;
+            edges_h_u = h_u;
+            edges_w_v = w_v;
+            edges_h_v = h_v;
+            u.resize(w_u * h_u);
+            v.resize(w_v * h_v);
+            is_walls_u.resize(w_u * h_u);
+            is_walls_v.resize(w_v * h_v);
 
             for (int i = 0; i < u.size(); ++i)
             {
-                int x = i % edges_w;
-                int y = i / edges_w;
-                is_walls_u[i] = IsWall(x, y, edges_w, edges_h);
+                int x = i % edges_w_u;
+                is_walls_u[i] = IsWallU(x, edges_w_u);
                 u[i] = 0.001f;
             }
             for (int i = 0; i < v.size(); ++i)
             {
-                int x = i % edges_w;
-                int y = i / edges_w;
-                is_walls_v[i] = IsWall(x, y, edges_w, edges_h);
+                int y = i / edges_w_v;
+                is_walls_v[i] = IsWallV(y, edges_h_v);
                 v[i] = 0.001f;
             }
         }
 
         void Reset()
         {
-            this->edges_w = -1;
-            this->edges_h = -1;
+            edges_w_u = -1;
+            edges_h_u = -1;
+            edges_w_v = -1;
+            edges_h_v = -1;
             u.clear();
             v.clear();
             is_walls_u.clear();
             is_walls_v.clear();
         }
-        bool IsWall(int x, int y, int gridWidth, int gridHeight) const
+        [[nodiscard]]
+        bool IsWallU(int x, int grid_width) const
         {
-            // Outer domain boundary
-            if (x == 0 || x == gridWidth - 1 || y == 0 || y == gridHeight - 1)
+            return x == 0 || x == grid_width - 1;
+        }
+
+        [[nodiscard]]
+        bool IsWallV(int y, int grid_height) const
+        {
+            return y == 0 || y == grid_height - 1;
+        }
+
+        float GetActiveU(int x, int y) const
+        {
+            if (x < 0 || x >= edges_w_u || y < 0 || y >= edges_h_u)
             {
-                return true;
+                return 0.0f;
             }
-            return false;
+            const int idx = y * edges_w_u + x;
+            return is_walls_u[idx] ? 0.0f : u[idx];
+        }
+
+        float GetActiveV(int x, int y) const
+        {
+            if (x < 0 || x >= edges_w_v || y < 0 || y >= edges_h_v)
+            {
+                return 0.0f;
+            }
+            const int idx = y * edges_w_v + x;
+            return is_walls_v[idx] ? 0.0f : v[idx];
         }
     };
 
@@ -488,7 +498,6 @@ namespace CodeCuda::FluidSimulation
         float *pressures_output = nullptr;
         uint8_t *is_walls = nullptr;
         uint8_t *edges_states_count = nullptr;
-        int valid_cell_count = 0;
         int w = -1;
         int h = -1;
     };
@@ -501,8 +510,10 @@ namespace CodeCuda::FluidSimulation
         float *v_output;
         uint8_t *is_walls_u;
         uint8_t *is_walls_v;
-        int edges_w;
-        int edges_h;
+        int edges_w_u;
+        int edges_h_u;
+        int edges_w_v;
+        int edges_h_v;
     };
     namespace CodeSimulationDevice
     {
@@ -532,7 +543,8 @@ namespace CodeCuda::FluidSimulation
             }
             // if (solid_vel != nullptr)
             // {
-            //     return is_walls[y * w + x] == 1 && solid_vel[y * w + x].x < epsilon && solid_vel[y * w + x].y < epsilon
+            //     return is_walls[y * w + x] == 1 && solid_vel[y * w + x].x < epsilon && solid_vel[y * w + x].y <
+            //     epsilon
             //         ? 0.0f
             //         : 1.0f;
             // }
@@ -540,7 +552,7 @@ namespace CodeCuda::FluidSimulation
             // {
             //     return is_walls[y * w + x] == 1 ? 0.0f : 1.0f;
             // }
-                return is_walls[y * w + x] == 1 ? 0.0f : 1.0f;
+            return is_walls[y * w + x] == 1 ? 0.0f : 1.0f;
         }
 
         __device__ uint8_t &GetCellEdgesStateCount(int x, int y, int w, uint8_t *edges_states)
@@ -551,20 +563,31 @@ namespace CodeCuda::FluidSimulation
         __device__ float &GetEdge(int x, int y, int edges_w, float *uv) { return uv[y * edges_w + x]; }
 
 
-        __device__ void GetCellEdgesIdxs(int x, int y, int edge_w, int &edge_u_left_out, int &edge_u_right_out,
-                                         int &edge_v_top_out, int &edge_v_bottom_out)
+        __device__ void GetCellEdgesIdxs(int x, int y, int edges_w_u, int edges_w_v, int &edge_u_left_out,
+                                         int &edge_u_right_out, int &edge_v_top_out, int &edge_v_bottom_out)
         {
 
-            edge_u_left_out = y * edge_w + x;
-            edge_u_right_out = y * edge_w + (x + 1);
+            edge_u_left_out = y * edges_w_u + x;
+            edge_u_right_out = y * edges_w_u + (x + 1);
 
-            edge_v_top_out = (y + 1) * edge_w + x;
-            edge_v_bottom_out = y * edge_w + x;
+            edge_v_top_out = (y + 1) * edges_w_v + x;
+            edge_v_bottom_out = y * edges_w_v + x;
         }
 
         __device__ float GetEdgeState(int x, int y, int edges_w, uint8_t *uv_edges_state_arr)
         {
             return uv_edges_state_arr[y * edges_w + x] == 1 ? 0.0f : 1.0f;
+        }
+
+        __device__ float GetActiveEdge(int x, int y, int edges_w, int edges_h, float *uv,
+                                       uint8_t *uv_edges_state_arr)
+        {
+            if (x < 0 || x >= edges_w || y < 0 || y >= edges_h)
+            {
+                return 0.0f;
+            }
+            const int idx = y * edges_w + x;
+            return uv_edges_state_arr[idx] == 1 ? 0.0f : uv[idx];
         }
 
         __device__ uint8_t &GetWall(int x, int y, int edges_w, uint8_t *is_walls_uv)
@@ -583,8 +606,8 @@ namespace CodeCuda::FluidSimulation
         __device__ float SampleEdge(float x, float y, int edge_w_in, int edge_h_in, float *edges_old)
         {
 
-            x = clamp(x, 0.0f, float(edge_w_in - 2));
-            y = clamp(y, 0.0f, float(edge_h_in - 2));
+            x = clamp(x, 1.0f, float(edge_w_in - 2));
+            y = clamp(y, 1.0f, float(edge_h_in - 2));
             float tl_u_prev = edges_old[int(y + 1) * edge_w_in + int(x)];
             float tr_u_prev = edges_old[int(y + 1) * edge_w_in + (int(x) + 1)];
             float bl_u_prev = edges_old[(int(y)) * edge_w_in + int(x)];
@@ -603,8 +626,8 @@ namespace CodeCuda::FluidSimulation
         __device__ T SampleQuantity(float x, float y, int cells_w, int cells_h, const T *cell_quantity)
         {
 
-            x = clamp(x, 0.0f, float(cells_w - 2));
-            y = clamp(y, 0.0f, float(cells_h - 2));
+            x = clamp(x, 1.0f, float(cells_w - 2));
+            y = clamp(y, 1.0f, float(cells_h - 2));
             const T tl_u_prev = cell_quantity[int(y + 1) * cells_w + int(x)];
             const T tr_u_prev = cell_quantity[int(y + 1) * cells_w + (int(x) + 1)];
             const T bl_u_prev = cell_quantity[int(y) * cells_w + int(x)];
@@ -618,82 +641,62 @@ namespace CodeCuda::FluidSimulation
 
             return top * wy + bottom * (1.0f - wy);
         }
-        __device__ float GetVelocity(int x, int y, int edge_w, float *other_edge_arr_in)
-        {
-            float tl_v = other_edge_arr_in[(y + 1) * edge_w + x];
-            float tr_v = other_edge_arr_in[(y + 1) * edge_w + (x + 1)];
-            float bl_v = other_edge_arr_in[y * edge_w + x];
-            float br_v = other_edge_arr_in[y * edge_w + (x + 1)];
-            return (tl_v + tr_v + bl_v + br_v) * 0.25f;
-        }
-
-        __global__ void k_apply_forces(int size, float wind, float g, float diffusion_factor, float dt,
+        __global__ void k_apply_forces(int size_u, int size_v, float wind, float g, float diffusion_factor, float dt,
                                        c_cells_view cells_data, c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-            if (idx >= size)
-                return;
 
             float acc = wind;
-            int x = idx % edges_view.edges_w;
-            int y = idx / edges_view.edges_w;
-
-            if (edges_view.is_walls_u[idx] == 0)
+            if (idx < size_u && edges_view.is_walls_u[idx] == 0)
             {
-                if (!(x == 0 || x == cells_data.w - 1 || y == 0 || y == cells_data.h - 1))
-                {
-                    edges_view.u_output[idx] *= (1.0f - diffusion_factor);
-                    edges_view.u_output[idx] += acc * dt;
-                }
+                edges_view.u_output[idx] *= (1.0f - diffusion_factor);
+                edges_view.u_output[idx] += acc * dt;
             }
-            if (edges_view.is_walls_v[idx] == 0)
+            if (idx < size_v && edges_view.is_walls_v[idx] == 0)
             {
-                if (!(x == 0 || x == cells_data.w - 1 || y == 0 || y == cells_data.h - 1))
-                {
-                    edges_view.v_output[idx] *= (1.0f - diffusion_factor);
-                    edges_view.v_output[idx] += g * dt;
-                }
+                edges_view.v_output[idx] *= (1.0f - diffusion_factor);
+                edges_view.v_output[idx] += g * dt;
             }
         }
 
 
-        __global__ void k_diffuse(int size, float viscosity, float dt, c_cells_view cells_data, c_edges_view edges_view)
+        __global__ void k_diffuse(int size_u, int size_v, float viscosity, float dt, c_cells_view cells_data,
+                                  c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-            if (idx >= size)
-                return;
-
-            int x = idx % edges_view.edges_w;
-            int y = idx / edges_view.edges_w;
 
             float v = viscosity;
             float a = v * dt;
             float denom = 1 + 4 * a;
-            if (edges_view.is_walls_u[idx] == 0)
+            if (idx < size_u && edges_view.is_walls_u[idx] == 0)
             {
-                float l = GetEdge(x - 1, y, edges_view.edges_w, edges_view.u_output) *
-                    GetEdgeState(x - 1, y, edges_view.edges_w, edges_view.is_walls_u);
-                float r = GetEdge(x + 1, y, edges_view.edges_w, edges_view.u_output) *
-                    GetEdgeState(x + 1, y, edges_view.edges_w, edges_view.is_walls_u);
-                float b = GetEdge(x, y - 1, edges_view.edges_w, edges_view.u_output) *
-                    GetEdgeState(x, y - 1, edges_view.edges_w, edges_view.is_walls_u);
-                float t = GetEdge(x, y + 1, edges_view.edges_w, edges_view.u_output) *
-                    GetEdgeState(x, y + 1, edges_view.edges_w, edges_view.is_walls_u);
+                int x = idx % edges_view.edges_w_u;
+                int y = idx / edges_view.edges_w_u;
+                float l = GetActiveEdge(x - 1, y, edges_view.edges_w_u, edges_view.edges_h_u, edges_view.u_output,
+                                        edges_view.is_walls_u);
+                float r = GetActiveEdge(x + 1, y, edges_view.edges_w_u, edges_view.edges_h_u, edges_view.u_output,
+                                        edges_view.is_walls_u);
+                float b = GetActiveEdge(x, y - 1, edges_view.edges_w_u, edges_view.edges_h_u, edges_view.u_output,
+                                        edges_view.is_walls_u);
+                float t = GetActiveEdge(x, y + 1, edges_view.edges_w_u, edges_view.edges_h_u, edges_view.u_output,
+                                        edges_view.is_walls_u);
 
                 float neightbours_sum = l + r + t + b;
                 float u = (neightbours_sum)*a + edges_view.u_output[idx];
                 edges_view.u_input[idx] = u / denom;
             }
-            if (edges_view.is_walls_v[idx] == 0)
+            if (idx < size_v && edges_view.is_walls_v[idx] == 0)
             {
-                float l = GetEdge(x - 1, y, edges_view.edges_w, edges_view.v_output) *
-                    GetEdgeState(x - 1, y, edges_view.edges_w, edges_view.is_walls_v);
-                float r = GetEdge(x + 1, y, edges_view.edges_w, edges_view.v_output) *
-                    GetEdgeState(x + 1, y, edges_view.edges_w, edges_view.is_walls_v);
-                float b = GetEdge(x, y - 1, edges_view.edges_w, edges_view.v_output) *
-                    GetEdgeState(x, y - 1, edges_view.edges_w, edges_view.is_walls_v);
-                float t = GetEdge(x, y + 1, edges_view.edges_w, edges_view.v_output) *
-                    GetEdgeState(x, y + 1, edges_view.edges_w, edges_view.is_walls_v);
+                int x = idx % edges_view.edges_w_v;
+                int y = idx / edges_view.edges_w_v;
+                float l = GetActiveEdge(x - 1, y, edges_view.edges_w_v, edges_view.edges_h_v, edges_view.v_output,
+                                        edges_view.is_walls_v);
+                float r = GetActiveEdge(x + 1, y, edges_view.edges_w_v, edges_view.edges_h_v, edges_view.v_output,
+                                        edges_view.is_walls_v);
+                float b = GetActiveEdge(x, y - 1, edges_view.edges_w_v, edges_view.edges_h_v, edges_view.v_output,
+                                        edges_view.is_walls_v);
+                float t = GetActiveEdge(x, y + 1, edges_view.edges_w_v, edges_view.edges_h_v, edges_view.v_output,
+                                        edges_view.is_walls_v);
 
                 float neightbours_sum = l + r + t + b;
                 float u = (neightbours_sum)*a + edges_view.v_output[idx];
@@ -771,34 +774,34 @@ namespace CodeCuda::FluidSimulation
             float press_b = GetCellPressure(x, y - 1, cells_data.w, cells_data.h, cells_data.pressures_input) *
                 GetCellFluidState(x, y - 1, cells_data.w, cells_data.h, cells_data.is_walls);
 
-            GetCellEdgesIdxs(x, y, edges_view.edges_w, edge_u_left_out_idx, edge_u_right_out_idx, edge_v_top_out_idx,
-                             edge_v_bottom_out_idx);
+            GetCellEdgesIdxs(x, y, edges_view.edges_w_u, edges_view.edges_w_v, edge_u_left_out_idx,
+                             edge_u_right_out_idx, edge_v_top_out_idx, edge_v_bottom_out_idx);
 
             float press_sum = (press_l + press_r + press_t + press_b);
-            float u_r = GetEdge(x + 1, y, edges_view.edges_w, edges_view.u_output) *
-                GetEdgeState(x + 1, y, edges_view.edges_w, edges_view.is_walls_u);
-            float u_l = GetEdge(x, y, edges_view.edges_w, edges_view.u_output) *
-                GetEdgeState(x, y, edges_view.edges_w, edges_view.is_walls_u);
-            float v_t = GetEdge(x, y + 1, edges_view.edges_w, edges_view.v_output) *
-                GetEdgeState(x, y + 1, edges_view.edges_w, edges_view.is_walls_v);
-            float v_b = GetEdge(x, y, edges_view.edges_w, edges_view.v_output) *
-                GetEdgeState(x, y, edges_view.edges_w, edges_view.is_walls_v);
+            float u_r = GetEdge(x + 1, y, edges_view.edges_w_u, edges_view.u_output) *
+                GetEdgeState(x + 1, y, edges_view.edges_w_u, edges_view.is_walls_u);
+            float u_l = GetEdge(x, y, edges_view.edges_w_u, edges_view.u_output) *
+                GetEdgeState(x, y, edges_view.edges_w_u, edges_view.is_walls_u);
+            float v_t = GetEdge(x, y + 1, edges_view.edges_w_v, edges_view.v_output) *
+                GetEdgeState(x, y + 1, edges_view.edges_w_v, edges_view.is_walls_v);
+            float v_b = GetEdge(x, y, edges_view.edges_w_v, edges_view.v_output) *
+                GetEdgeState(x, y, edges_view.edges_w_v, edges_view.is_walls_v);
 
             float velocities_sum = u_r - u_l + v_t - v_b;
             float pressure_new = (press_sum / float(s)) - (density * dx * velocities_sum) / (float(s) * dt);
             cells_data.pressures_output[idx] = pressure_new;
         }
 
-        __global__ void k_simulation_update_velocities_u(int size, float dt, float k,
-                                                         c_cells_view cells_data, c_edges_view edges_view)
+        __global__ void k_simulation_update_velocities_u(int size, float dt, float k, c_cells_view cells_data,
+                                                         c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
 
-            int x = idx % edges_view.edges_w;
-            int y = idx / edges_view.edges_w;
-            // if (x == 0 || x == cells_data.w - 1 || y == 0 || y == cells_data.h - 1)
+            int x = idx % edges_view.edges_w_u;
+            int y = idx / edges_view.edges_w_u;
+            // if (x == 0 || x == edges_view.edges_w_u - 1)
             // {
             //     return;
             // }
@@ -817,15 +820,19 @@ namespace CodeCuda::FluidSimulation
         }
 
         __global__ void k_simulation_update_velocities_v(int size, float dt, float gravity, float k,
-                                                         c_cells_view cells_data,
-                                                         c_edges_view edges_view)
+                                                         c_cells_view cells_data, c_edges_view edges_view)
         {
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
 
-            int x = idx % edges_view.edges_w;
-            int y = idx / edges_view.edges_w;
+            int x = idx % edges_view.edges_w_v;
+            int y = idx / edges_view.edges_w_v;
+
+            // if (y == 0 || y == edges_view.edges_h_v - 1)
+            // {
+            //     return;
+            // }
             if (edges_view.is_walls_v[idx] == 0)
             {
                 float press_t = GetCellPressure(x, y, cells_data.w, cells_data.h, cells_data.pressures_input) *
@@ -847,18 +854,19 @@ namespace CodeCuda::FluidSimulation
             if (idx >= size)
                 return;
 
-            int x = idx % edges_view.edges_w;
-            int y = idx / edges_view.edges_w;
+            int x = idx % edges_view.edges_w_u;
+            int y = idx / edges_view.edges_w_u;
 
             if (!edges_view.is_walls_u[idx])
             {
                 float u = edges_view.u_input[idx];
-                float v = GetVelocity(x, y, edges_view.edges_w, edges_view.v_input);
+                float v = SampleEdge(float(x) - 0.5f, float(y) + 0.5f, edges_view.edges_w_v,
+                                     edges_view.edges_h_v, edges_view.v_input);
                 float pos[2] = {float(x), float(y)};
                 float x_pos = pos[0] - u * dt / dx;
                 float y_pos = pos[1] - v * dt / dy;
                 edges_view.u_output[idx] =
-                    SampleEdge(x_pos, y_pos, edges_view.edges_w, edges_view.edges_h, edges_view.u_input);
+                    SampleEdge(x_pos, y_pos, edges_view.edges_w_u, edges_view.edges_h_u, edges_view.u_input);
             }
         }
         __global__ void k_simulation_advection_v(int size, float dt, float dx, float dy, c_cells_view cells_data,
@@ -868,17 +876,18 @@ namespace CodeCuda::FluidSimulation
             if (idx >= size)
                 return;
 
-            int x = idx % edges_view.edges_w;
-            int y = idx / edges_view.edges_w;
+            int x = idx % edges_view.edges_w_v;
+            int y = idx / edges_view.edges_w_v;
             if (!edges_view.is_walls_v[idx])
             {
                 float v = edges_view.v_input[idx];
-                float u = GetVelocity(x, y, edges_view.edges_w, edges_view.u_input);
+                float u = SampleEdge(float(x) + 0.5f, float(y) - 0.5f, edges_view.edges_w_u,
+                                     edges_view.edges_h_u, edges_view.u_input);
                 float pos[2] = {float(x), float(y)};
                 float x_pos = pos[0] - u * dt / dx;
                 float y_pos = pos[1] - v * dt / dy;
                 edges_view.v_output[idx] =
-                    SampleEdge(x_pos, y_pos, edges_view.edges_w, edges_view.edges_h, edges_view.v_input);
+                    SampleEdge(x_pos, y_pos, edges_view.edges_w_v, edges_view.edges_h_v, edges_view.v_input);
             }
         }
         __global__ void k_simulation_advection_smoke(int size, float dt, float dx, float dy,
@@ -905,7 +914,7 @@ namespace CodeCuda::FluidSimulation
             int r = -1;
             int b = -1;
             int t = -1;
-            GetCellEdgesIdxs(x, y, edges_view.edges_w, l, r, b, t);
+            GetCellEdgesIdxs(x, y, edges_view.edges_w_u, edges_view.edges_w_v, l, r, t, b);
             float u = (edges_view.u_output[l] + edges_view.u_output[r]) * 0.5f;
             float v = (edges_view.v_output[b] + edges_view.v_output[t]) * 0.5f;
 
@@ -933,11 +942,6 @@ namespace CodeCuda::FluidSimulation
             const int x = x_pos + local_x;
             const int y = y_pos + local_y;
 
-            if (x < 0 || x >= edges_view.edges_w || y < 0 || y >= edges_view.edges_h)
-            {
-                return;
-            }
-
             const int sq_dist = local_x * local_x + local_y * local_y;
             const int radius_sq = radius * radius;
 
@@ -946,17 +950,23 @@ namespace CodeCuda::FluidSimulation
                 return;
             }
 
-            const int edge_idx = y * edges_view.edges_w + x;
-
-            // Same behavior as your CPU AddVelocity:
-            // skip the position if either component is a wall.
-            if (edges_view.is_walls_u[edge_idx] || edges_view.is_walls_v[edge_idx])
+            if (x >= 0 && x < edges_view.edges_w_u && y >= 0 && y < edges_view.edges_h_u)
             {
-                return;
+                const int u_idx = y * edges_view.edges_w_u + x;
+                if (!edges_view.is_walls_u[u_idx])
+                {
+                    edges_view.u_output[u_idx] += vel_x;
+                }
             }
 
-            edges_view.u_output[edge_idx] += vel_x;
-            edges_view.v_output[edge_idx] += vel_y;
+            if (x >= 0 && x < edges_view.edges_w_v && y >= 0 && y < edges_view.edges_h_v)
+            {
+                const int v_idx = y * edges_view.edges_w_v + x;
+                if (!edges_view.is_walls_v[v_idx])
+                {
+                    edges_view.v_output[v_idx] += vel_y;
+                }
+            }
         }
 
         __global__ void k_simulation_add_smoke(int size, int x_pos, int y_pos, int radius, vec4 value,
@@ -1043,7 +1053,7 @@ namespace CodeCuda::FluidSimulation
                                                                    c_edges_view edges_view)
         {
             uint32_t idx = blockDim.x * blockIdx.x + threadIdx.x;
-            if (idx > size)
+            if (idx >= size)
             {
                 return;
             }
@@ -1053,12 +1063,12 @@ namespace CodeCuda::FluidSimulation
             int r = -1;
             int t = -1;
             int b = -1;
-            GetCellEdgesIdxs(x, y, cells_view.w, l, r, t, b);
+            GetCellEdgesIdxs(x, y, edges_view.edges_w_u, edges_view.edges_w_v, l, r, t, b);
             vec2 &speed = cells_view.solid_speeds[idx];
             edges_view.u_output[l] = speed.x;
             edges_view.u_output[r] = speed.x;
-            edges_view.u_output[b] = speed.y;
-            edges_view.u_output[t] = speed.y;
+            edges_view.v_output[b] = speed.y;
+            edges_view.v_output[t] = speed.y;
         }
     } // namespace CodeSimulationDevice
 
@@ -1067,16 +1077,17 @@ namespace CodeCuda::FluidSimulation
         c_grid() = default;
         void InitGrid(int width, int height)
         {
-            this->edge_w = (width + 1);
-            this->edge_h = (height + 1);
+            this->edges_w_u = width + 1;
+            this->edges_h_u = height;
+            this->edges_w_v = width;
+            this->edges_h_v = height + 1;
             this->w = width;
             this->h = height;
             this->dx = 1.0f / float(w);
             this->dy = 1.0f / float(h);
 
-            edges_data.Resize(this->edge_w, this->edge_h);
-
             cells_data.Resize(w, h);
+            edges_data.Resize(edges_w_u, edges_h_u, edges_w_v, edges_h_v);
             InitSolids();
             InitViews();
             ready_to_run = true;
@@ -1084,9 +1095,9 @@ namespace CodeCuda::FluidSimulation
         void InitSolids()
         {
             // First pass: mark all solid-cell edges.
-            for (int i = 0; i < cells_data.pressures.size(); ++i)
+            for (int i = 0; i < cells_data.w * cells_data.h; ++i)
             {
-                if (!cells_data.is_walls[i])
+                if (cells_data.is_walls[i] == 0)
                 {
                     continue;
                 }
@@ -1100,24 +1111,24 @@ namespace CodeCuda::FluidSimulation
                 int v_bottom;
 
                 GetCellEdgesIdxs(x, y, u_left, u_right, v_top, v_bottom);
-                if (x == 0)
-                {
-                    edges_data.u[u_left] = -1.0f;
-                    continue;
-                }
-                if (x == w - 1)
-                {
-                    edges_data.u[u_right] = 1.0f;
-                    continue;
-                }
+                // if (x == 0)
+                // {
+                //     edges_data.u[u_left] = 0.0f;
+                //     continue;
+                // }
+                // if (x == w - 1)
+                // {
+                //     edges_data.u[u_right] = 0.0f;
+                //     continue;
+                // }
                 // if (y == 0)
                 // {
-                //     edges_data.v[v_bottom] = -1.0f;
+                //     edges_data.v[v_bottom] = 0.0f;
                 //     continue;
                 // }
                 // if (y == h - 1)
                 // {
-                //     edges_data.v[v_top] = 1.0f;
+                //     edges_data.v[v_top] = 0.0f;
                 //     continue;
                 // }
 
@@ -1126,81 +1137,16 @@ namespace CodeCuda::FluidSimulation
                 edges_data.is_walls_v[v_top] = 1;
                 edges_data.is_walls_v[v_bottom] = 1;
 
-                edges_data.u[u_left] = 0.0f;
-                edges_data.u[u_right] = 0.0f;
-                edges_data.v[v_top] = 0.0f;
-                edges_data.v[v_bottom] = 0.0f;
+                edges_data.u[u_left] = cells_data.solid_speeds[i].x;
+                edges_data.u[u_right] = cells_data.solid_speeds[i].x;
+                edges_data.v[v_top] = cells_data.solid_speeds[i].y;
+                edges_data.v[v_bottom] = cells_data.solid_speeds[i].y;
             }
 
-            for (int i = 0; i < cells_data.pressures.size(); ++i)
-            {
-                int x = i % w;
-                int y = i / w;
-
-                cells_data.edges_states_count[i] =
-                    static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
-                                         edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
-            }
+            UpdateCellStates();
         }
-        void UpdateSolids(bool to_change_val)
+        void UpdateCellStates()
         {
-            // // First pass: mark all solid-cell edges.
-            // for (int i = 0; i < cells_data.pressures.size(); ++i)
-            // {
-            //     int x = i % w;
-            //     int y = i / w;
-            //
-            //     bool is_solid = cells_data.is_walls[i] == 1;
-            //     if (is_solid != to_change_val)
-            //     {
-            //         continue;
-            //     }
-            //
-            //     int u_left;
-            //     int u_right;
-            //     int v_top;
-            //     int v_bottom;
-            //
-            //     GetCellEdgesIdxs(x, y, u_left, u_right, v_top, v_bottom);
-            //     if (x == 0)
-            //     {
-            //         continue;
-            //     }
-            //     if (x == w - 1)
-            //     {
-            //         continue;
-            //     }
-            //     if (y == 0)
-            //     {
-            //         continue;
-            //     }
-            //     if (y == h - 1)
-            //     {
-            //         continue;
-            //     }
-            //     // if (y == 0)
-            //     // {
-            //     //     edges_data.v[v_bottom] = -1.0f;
-            //     //     continue;
-            //     // }
-            //     // if (y == h - 1)
-            //     // {
-            //     //     edges_data.v[v_top] = 1.0f;
-            //     //     continue;
-            //     // }
-            //
-            //     edges_data.is_walls_u[u_left] = cells_data.is_walls[i];
-            //     edges_data.is_walls_u[u_right] = cells_data.is_walls[i];
-            //     edges_data.is_walls_v[v_top] = cells_data.is_walls[i];
-            //     edges_data.is_walls_v[v_bottom] = cells_data.is_walls[i];
-            //
-            //     // float speed = cells_data.is_walls[i] == 1 ? 0.0 : 1.0;
-            //     // edges_data.u[u_left] = cells_data.is_walls[i] == 1 ? 0 : edges_data.u[u_left];
-            //     // edges_data.u[u_right] = cells_data.is_walls[i] == 1 ? 0 : edges_data.u[u_right];
-            //     // edges_data.v[v_top] = cells_data.is_walls[i] == 1 ? 0 : edges_data.v[v_top];
-            //     // edges_data.v[v_bottom] = cells_data.is_walls[i] == 1 ? 0 : edges_data.v[v_bottom];
-            // }
-            //
             for (int i = 0; i < cells_data.pressures.size(); ++i)
             {
                 int x = i % w;
@@ -1214,7 +1160,8 @@ namespace CodeCuda::FluidSimulation
         void InitViews()
         {
             int cell_count = w * h;
-            int edge_count = edge_w * edge_h;
+            int edge_count_u = edges_w_u * edges_h_u;
+            int edge_count_v = edges_w_v * edges_h_v;
 
             cells_view.w = w;
             cells_view.h = h;
@@ -1228,14 +1175,16 @@ namespace CodeCuda::FluidSimulation
             CODE_API::CW_Malloc(&cells_view.edges_states_count, sizeof(uint8_t) * cell_count);
 
 
-            edges_view.edges_w = edge_w;
-            edges_view.edges_h = edge_h;
-            CODE_API::CW_Malloc(&edges_view.u_input, sizeof(float) * edge_count);
-            CODE_API::CW_Malloc(&edges_view.v_input, sizeof(float) * edge_count);
-            CODE_API::CW_Malloc(&edges_view.u_output, sizeof(float) * edge_count);
-            CODE_API::CW_Malloc(&edges_view.v_output, sizeof(float) * edge_count);
-            CODE_API::CW_Malloc(&edges_view.is_walls_u, sizeof(uint8_t) * edge_count);
-            CODE_API::CW_Malloc(&edges_view.is_walls_v, sizeof(uint8_t) * edge_count);
+            edges_view.edges_w_u = edges_w_u;
+            edges_view.edges_h_u = edges_h_u;
+            edges_view.edges_w_v = edges_w_v;
+            edges_view.edges_h_v = edges_h_v;
+            CODE_API::CW_Malloc(&edges_view.u_input, sizeof(float) * edge_count_u);
+            CODE_API::CW_Malloc(&edges_view.v_input, sizeof(float) * edge_count_v);
+            CODE_API::CW_Malloc(&edges_view.u_output, sizeof(float) * edge_count_u);
+            CODE_API::CW_Malloc(&edges_view.v_output, sizeof(float) * edge_count_v);
+            CODE_API::CW_Malloc(&edges_view.is_walls_u, sizeof(uint8_t) * edge_count_u);
+            CODE_API::CW_Malloc(&edges_view.is_walls_v, sizeof(uint8_t) * edge_count_v);
 
             CODE_API::CW_Memcpy(cells_view.divs, cells_data.divs.data(), sizeof(float) * cell_count,
                                 cudaMemcpyHostToDevice);
@@ -1254,69 +1203,71 @@ namespace CodeCuda::FluidSimulation
             CODE_API::CW_Memcpy(cells_view.edges_states_count, cells_data.edges_states_count.data(),
                                 sizeof(uint8_t) * cell_count, cudaMemcpyHostToDevice);
 
-            CODE_API::CW_Memcpy(edges_view.u_input, edges_data.u.data(), sizeof(float) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.u_input, edges_data.u.data(), sizeof(float) * edge_count_u,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(edges_view.v_input, edges_data.v.data(), sizeof(float) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.v_input, edges_data.v.data(), sizeof(float) * edge_count_v,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(edges_view.u_output, edges_data.u.data(), sizeof(float) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.u_output, edges_data.u.data(), sizeof(float) * edge_count_u,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(edges_view.v_output, edges_data.v.data(), sizeof(float) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.v_output, edges_data.v.data(), sizeof(float) * edge_count_v,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(edges_view.is_walls_u, edges_data.is_walls_u.data(), sizeof(uint8_t) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.is_walls_u, edges_data.is_walls_u.data(), sizeof(uint8_t) * edge_count_u,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(edges_view.is_walls_v, edges_data.is_walls_v.data(), sizeof(uint8_t) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.is_walls_v, edges_data.is_walls_v.data(), sizeof(uint8_t) * edge_count_v,
                                 cudaMemcpyHostToDevice);
         }
         void CopyHostToDevice(float *current_pressure, vec4 *smoke, float *u, float *v)
         {
 
             int cell_count = w * h;
-            int edge_count = edge_w * edge_h;
+            int edge_count_u = edges_w_u * edges_h_u;
+            int edge_count_v = edges_w_v * edges_h_v;
             CODE_API::CW_Memcpy(cells_view.divs, cells_data.divs.data(), sizeof(float) * cell_count,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(cells_view.solid_speeds, cells_data.solid_speeds.data(), sizeof(float) * cell_count,
+            CODE_API::CW_Memcpy(cells_view.solid_speeds, cells_data.solid_speeds.data(), sizeof(vec2) * cell_count,
                                 cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(cells_view.is_walls, cells_data.is_walls.data(), sizeof(uint8_t) * cell_count,
                                 cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(cells_view.edges_states_count, cells_data.edges_states_count.data(),
                                 sizeof(uint8_t) * cell_count, cudaMemcpyHostToDevice);
 
-            CODE_API::CW_Memcpy(edges_view.is_walls_u, edges_data.is_walls_u.data(), sizeof(uint8_t) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.is_walls_u, edges_data.is_walls_u.data(), sizeof(uint8_t) * edge_count_u,
                                 cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(edges_view.is_walls_v, edges_data.is_walls_v.data(), sizeof(uint8_t) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.is_walls_v, edges_data.is_walls_v.data(), sizeof(uint8_t) * edge_count_v,
                                 cudaMemcpyHostToDevice);
 
             CODE_API::CW_Memcpy(current_pressure, cells_data.pressures.data(), sizeof(float) * cell_count,
                                 cudaMemcpyHostToDevice);
             CODE_API::CW_Memcpy(smoke, cells_data.smoke.data(), sizeof(vec4) * cell_count, cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(u, edges_data.u.data(), sizeof(float) * edge_count, cudaMemcpyHostToDevice);
-            CODE_API::CW_Memcpy(v, edges_data.v.data(), sizeof(float) * edge_count, cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(u, edges_data.u.data(), sizeof(float) * edge_count_u, cudaMemcpyHostToDevice);
+            CODE_API::CW_Memcpy(v, edges_data.v.data(), sizeof(float) * edge_count_v, cudaMemcpyHostToDevice);
         }
 
         void CopyDeviceToHost(float *current_pressure, vec4 *smoke, float *u, float *v)
         {
             int cell_count = w * h;
-            int edge_count = edge_w * edge_h;
+            int edge_count_u = edges_w_u * edges_h_u;
+            int edge_count_v = edges_w_v * edges_h_v;
 
             CODE_API::CW_Memcpy(cells_data.divs.data(), cells_view.divs, sizeof(float) * cell_count,
                                 cudaMemcpyDeviceToHost);
-            CODE_API::CW_Memcpy(cells_data.solid_speeds.data(), cells_view.solid_speeds, sizeof(float) * cell_count,
+            CODE_API::CW_Memcpy(cells_data.solid_speeds.data(), cells_view.solid_speeds, sizeof(vec2) * cell_count,
                                 cudaMemcpyDeviceToHost);
             CODE_API::CW_Memcpy(cells_data.is_walls.data(), cells_view.is_walls, sizeof(uint8_t) * cell_count,
                                 cudaMemcpyDeviceToHost);
             CODE_API::CW_Memcpy(cells_data.edges_states_count.data(), cells_view.edges_states_count,
                                 sizeof(uint8_t) * cell_count, cudaMemcpyDeviceToHost);
 
-            CODE_API::CW_Memcpy(edges_data.is_walls_u.data(), edges_view.is_walls_u, sizeof(uint8_t) * edge_count,
+            CODE_API::CW_Memcpy(edges_data.is_walls_u.data(), edges_view.is_walls_u, sizeof(uint8_t) * edge_count_u,
                                 cudaMemcpyDeviceToHost);
-            CODE_API::CW_Memcpy(edges_data.is_walls_v.data(), edges_view.is_walls_v, sizeof(uint8_t) * edge_count,
+            CODE_API::CW_Memcpy(edges_data.is_walls_v.data(), edges_view.is_walls_v, sizeof(uint8_t) * edge_count_v,
                                 cudaMemcpyDeviceToHost);
 
             CODE_API::CW_Memcpy(cells_data.pressures.data(), current_pressure, sizeof(float) * cell_count,
                                 cudaMemcpyDeviceToHost);
             CODE_API::CW_Memcpy(cells_data.smoke.data(), smoke, sizeof(vec4) * cell_count, cudaMemcpyDeviceToHost);
-            CODE_API::CW_Memcpy(edges_data.u.data(), u, sizeof(float) * edge_count, cudaMemcpyDeviceToHost);
-            CODE_API::CW_Memcpy(edges_data.v.data(), v, sizeof(float) * edge_count, cudaMemcpyDeviceToHost);
+            CODE_API::CW_Memcpy(edges_data.u.data(), u, sizeof(float) * edge_count_u, cudaMemcpyDeviceToHost);
+            CODE_API::CW_Memcpy(edges_data.v.data(), v, sizeof(float) * edge_count_v, cudaMemcpyDeviceToHost);
         }
         void ClearViews()
         {
@@ -1368,18 +1319,25 @@ namespace CodeCuda::FluidSimulation
         void ApplyForcesGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
-            dim3 grid((edges_view.edges_w * edges_view.edges_h + block.x - 1) / block.x, 1, 1);
+            const int edge_count_u = edges_view.edges_w_u * edges_view.edges_h_u;
+            const int edge_count_v = edges_view.edges_w_v * edges_view.edges_h_v;
+            const int edge_count = std::max(edge_count_u, edge_count_v);
+            dim3 grid((edge_count + block.x - 1) / block.x, 1, 1);
             CodeSimulationDevice::k_apply_forces<<<grid, block, 0, stream>>>(
-                edges_view.edges_w * edges_view.edges_h, params.wind_speed, params.g, params.velocity_dissipation, params.dt, cells_view, edges_view);
+                edge_count_u, edge_count_v, params.wind_speed, params.g, params.velocity_dissipation, params.dt,
+                cells_view, edges_view);
         }
         void DiffuseGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
-            dim3 grid((edges_view.edges_w * edges_view.edges_h + block.x - 1) / block.x, 1, 1);
+            const int edge_count_u = edges_view.edges_w_u * edges_view.edges_h_u;
+            const int edge_count_v = edges_view.edges_w_v * edges_view.edges_h_v;
+            const int edge_count = std::max(edge_count_u, edge_count_v);
+            dim3 grid((edge_count + block.x - 1) / block.x, 1, 1);
             for (int i = 0; i < params.total_iter_gpu; ++i)
             {
-                CodeSimulationDevice::k_diffuse<<<grid, block, 0, stream>>>(edge_h * edge_w, params.viscosity,
-                                                                            params.dt, cells_view, edges_view);
+                CodeSimulationDevice::k_diffuse<<<grid, block, 0, stream>>>(
+                    edge_count_u, edge_count_v, params.viscosity, params.dt, cells_view, edges_view);
                 std::swap(edges_view.u_input, edges_view.u_output);
                 std::swap(edges_view.v_input, edges_view.v_output);
             }
@@ -1404,7 +1362,7 @@ namespace CodeCuda::FluidSimulation
             if (solid_update_requested)
             {
 
-                CODE_API::CW_Memcpy(cells_view.solid_speeds, cells_data.solid_speeds.data(), sizeof(float) * cell_count,
+                CODE_API::CW_Memcpy(cells_view.solid_speeds, cells_data.solid_speeds.data(), sizeof(vec2) * cell_count,
                                     cudaMemcpyHostToDevice);
                 dim3 block(1024, 1, 1);
                 dim3 grid((w * h + block.x - 1) / block.x, 1, 1);
@@ -1478,31 +1436,33 @@ namespace CodeCuda::FluidSimulation
             float denom = 1 + 4 * a;
             for (int i = 0; i < params.total_iter_cpu; ++i)
             {
-                for (int y = 0; y < edge_h; ++y)
+                for (int y = 0; y < edges_h_u; ++y)
                 {
-                    for (int x = 0; x < edge_w; ++x)
+                    for (int x = 0; x < edges_w_u; ++x)
                     {
                         if (edges_data.GetWallU(x, y) == 0)
                         {
-
-                            float c = edges_data.GetU(y, x);
-                            float l = edges_data.GetU(x - 1, y) * edges_data.GetStateU(x - 1, y);
-                            float r = edges_data.GetU(x + 1, y) * edges_data.GetStateU(x + 1, y);
-                            float b = edges_data.GetU(x, y) * edges_data.GetStateU(x, y);
-                            float t = edges_data.GetU(x, y + 1) * edges_data.GetStateU(x, y + 1);
+                            float l = edges_data.GetActiveU(x - 1, y);
+                            float r = edges_data.GetActiveU(x + 1, y);
+                            float b = edges_data.GetActiveU(x, y - 1);
+                            float t = edges_data.GetActiveU(x, y + 1);
 
                             float neightbours_sum = l + r + t + b;
                             float u = (neightbours_sum)*a + edges_data.GetU(x, y);
                             edges_data.GetU(x, y) = u / denom;
                         }
+                    }
+                }
+                for (int y = 0; y < edges_h_v; ++y)
+                {
+                    for (int x = 0; x < edges_w_v; ++x)
+                    {
                         if (edges_data.GetWallV(x, y) == 0)
                         {
-
-                            float c = edges_data.GetV(y, x);
-                            float l = edges_data.GetV(x - 1, y) * edges_data.GetStateV(x - 1, y);
-                            float r = edges_data.GetV(x + 1, y) * edges_data.GetStateV(x + 1, y);
-                            float b = edges_data.GetV(x, y) * edges_data.GetStateV(x, y);
-                            float t = edges_data.GetV(x, y + 1) * edges_data.GetStateV(x, y + 1);
+                            float l = edges_data.GetActiveV(x - 1, y);
+                            float r = edges_data.GetActiveV(x + 1, y);
+                            float b = edges_data.GetActiveV(x, y - 1);
+                            float t = edges_data.GetActiveV(x, y + 1);
 
                             float neightbours_sum = l + r + t + b;
                             float v = (neightbours_sum)*a + edges_data.GetV(x, y);
@@ -1517,9 +1477,9 @@ namespace CodeCuda::FluidSimulation
         {
             const float acceleration = params.wind_speed;
 
-            for (int y = 0; y < edge_h; ++y)
+            for (int y = 0; y < edges_h_u; ++y)
             {
-                for (int x = 0; x < edge_w; ++x)
+                for (int x = 0; x < edges_w_u; ++x)
                 {
                     if (edges_data.GetWallU(x, y))
                     {
@@ -1533,7 +1493,8 @@ namespace CodeCuda::FluidSimulation
 
         void AddRadialVelocity(int x_pos, int y_pos, int radius, float scale)
         {
-            if (x_pos < 0 || x_pos >= edge_w || y_pos < 0 || y_pos >= edge_h || radius <= 0)
+            if (x_pos < 0 || x_pos >= std::max(edges_w_u, edges_w_v) || y_pos < 0 ||
+                y_pos >= std::max(edges_h_u, edges_h_v) || radius <= 0)
             {
                 CODECUDA_PRINTLN("Invalid radial velocity parameters");
                 return;
@@ -1553,11 +1514,6 @@ namespace CodeCuda::FluidSimulation
                     const int x_final = x_pos + x;
                     const int y_final = y_pos + y;
 
-                    if (x_final < 0 || x_final >= edge_w || y_final < 0 || y_final >= edge_h)
-                    {
-                        continue;
-                    }
-
                     const int sq_dist = x * x + y * y;
 
                     if (sq_dist == 0 || sq_dist > radius_sq)
@@ -1565,22 +1521,28 @@ namespace CodeCuda::FluidSimulation
                         continue;
                     }
 
-                    const int idx = y_final * edge_w + x_final;
-
                     const float distance = std::sqrt(static_cast<float>(sq_dist));
 
                     const float u = static_cast<float>(x) / distance * scale;
 
                     const float v = static_cast<float>(y) / distance * scale;
 
-                    if (!edges_data.is_walls_u[idx])
+                    if (x_final >= 0 && x_final < edges_w_u && y_final >= 0 && y_final < edges_h_u)
                     {
-                        edges_data.u[idx] += u;
+                        const int u_idx = y_final * edges_w_u + x_final;
+                        if (!edges_data.is_walls_u[u_idx])
+                        {
+                            edges_data.u[u_idx] += u;
+                        }
                     }
 
-                    if (!edges_data.is_walls_v[idx])
+                    if (x_final >= 0 && x_final < edges_w_v && y_final >= 0 && y_final < edges_h_v)
                     {
-                        edges_data.v[idx] += v;
+                        const int v_idx = y_final * edges_w_v + x_final;
+                        if (!edges_data.is_walls_v[v_idx])
+                        {
+                            edges_data.v[v_idx] += v;
+                        }
                     }
                 }
             }
@@ -1640,19 +1602,32 @@ namespace CodeCuda::FluidSimulation
 
             float *data_as_float = (float *)data;
 
-            for (int y = 0; y < edges_data.edges_h; ++y)
+            for (int y = 0; y < edges_data.edges_h_u; ++y)
             {
-                for (int x = 0; x < edges_data.edges_w; ++x)
+                for (int x = 0; x < edges_data.edges_w_u; ++x)
                 {
-                    vec2 uv = {float(x) / float(edges_data.edges_w - 1), float(y) / float(edges_data.edges_h - 1)};
+                    vec2 uv = {float(x) / float(edges_data.edges_w_u - 1),
+                               (float(y) + 0.5f) / float(edges_data.edges_h_u)};
                     int source_pos_x = int(uv.x * (source_w - 1));
                     int source_pos_y = int(uv.y * (source_h - 1));
                     int base_offset = source_pos_y * source_w + source_pos_x;
 
                     float u = data_as_float[base_offset * per_element_offset + 0];
+                    edges_data.u[y * edges_data.edges_w_u + x] += u;
+                }
+            }
+            for (int y = 0; y < edges_data.edges_h_v; ++y)
+            {
+                for (int x = 0; x < edges_data.edges_w_v; ++x)
+                {
+                    vec2 uv = {(float(x) + 0.5f) / float(edges_data.edges_w_v),
+                               float(y) / float(edges_data.edges_h_v - 1)};
+                    int source_pos_x = int(uv.x * (source_w - 1));
+                    int source_pos_y = int(uv.y * (source_h - 1));
+                    int base_offset = source_pos_y * source_w + source_pos_x;
+
                     float v = data_as_float[base_offset * per_element_offset + 1];
-                    edges_data.u[y * edges_data.edges_w + x] += u;
-                    edges_data.v[y * edges_data.edges_w + x] += v;
+                    edges_data.v[y * edges_data.edges_w_v + x] += v;
                 }
             }
             if (params.gpu_sim)
@@ -1829,15 +1804,7 @@ namespace CodeCuda::FluidSimulation
                     edges_data.is_walls_v[v_bottom] = cells_data.is_walls[y * cells_data.w + x];
                 }
             }
-            for (int i = 0; i < cells_data.pressures.size(); ++i)
-            {
-                int x = i % w;
-                int y = i / w;
-
-                cells_data.edges_states_count[i] =
-                    static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
-                                         edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
-            }
+            UpdateCellStates();
             if (params.gpu_sim)
             {
                 CopyHostToDevice(cells_view.pressures_output, cells_view.smoke_output, edges_view.u_output,
@@ -1845,7 +1812,7 @@ namespace CodeCuda::FluidSimulation
             }
         }
 
-        void SetSolidWithSpeed(int x_pos, int y_pos, int radius, bool solid)
+        void SetSolidWithSpeed(int x_pos, int y_pos, vec2 vel, int radius, bool solid)
         {
             if (x_pos < 0 || x_pos >= w || y_pos < 0 || y_pos >= h)
             {
@@ -1889,16 +1856,7 @@ namespace CodeCuda::FluidSimulation
                     edges_data.is_walls_v[v_bottom] = cells_data.is_walls[idx];
                 }
             }
-
-            for (int i = 0; i < cells_data.pressures.size(); ++i)
-            {
-                int x = i % w;
-                int y = i / w;
-
-                cells_data.edges_states_count[i] =
-                    static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
-                                         edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
-            }
+            UpdateCellStates();
         }
         void SetSolid(int x_pos, int y_pos, int radius, bool solid)
         {
@@ -1947,16 +1905,7 @@ namespace CodeCuda::FluidSimulation
                 }
             }
 
-            for (int i = 0; i < cells_data.pressures.size(); ++i)
-            {
-                int x = i % w;
-                int y = i / w;
-
-                cells_data.edges_states_count[i] =
-                    static_cast<uint8_t>(edges_data.GetStateU(x, y) + edges_data.GetStateU(x + 1, y) +
-                                         edges_data.GetStateV(x, y) + edges_data.GetStateV(x, y + 1));
-            }
-            UpdateSolids(solid);
+            UpdateCellStates();
 
             if (params.gpu_sim)
             {
@@ -1966,7 +1915,8 @@ namespace CodeCuda::FluidSimulation
         }
         void AddVelocity(int x_pos, int y_pos, int radius, float vel_x, float vel_y)
         {
-            if (x_pos < 0 || x_pos >= edge_w || y_pos < 0 || y_pos >= edge_h)
+            if (x_pos < 0 || x_pos >= std::max(edges_w_u, edges_w_v) || y_pos < 0 ||
+                y_pos >= std::max(edges_h_u, edges_h_v))
             {
                 CODECUDA_PRINTLN("Invalid x,y pos");
                 return;
@@ -1983,27 +1933,28 @@ namespace CodeCuda::FluidSimulation
                 {
                     int x_final = x + x_pos;
                     int y_final = y + y_pos;
-                    if (x_final < 0 || x_final >= edge_w || y_final < 0 || y_final >= edge_h)
-                    {
-                        continue;
-                    }
                     int sq_dist = pow(x_final - x_pos, 2.0f) + pow(y_final - y_pos, 2.0f);
                     if (sq_dist >= radius * radius)
                     {
                         continue;
                     }
-                    int idx = y_final * edge_w + x_final;
-                    if (edges_data.is_walls_u[idx])
+                    if (x_final >= 0 && x_final < edges_w_u && y_final >= 0 && y_final < edges_h_u)
                     {
-                        continue;
-                    }
-                    if (edges_data.is_walls_v[idx])
-                    {
-                        continue;
+                        const int u_idx = y_final * edges_w_u + x_final;
+                        if (!edges_data.is_walls_u[u_idx])
+                        {
+                            edges_data.u[u_idx] += vel_x;
+                        }
                     }
 
-                    edges_data.u[idx] += vel_x;
-                    edges_data.v[idx] += vel_y;
+                    if (x_final >= 0 && x_final < edges_w_v && y_final >= 0 && y_final < edges_h_v)
+                    {
+                        const int v_idx = y_final * edges_w_v + x_final;
+                        if (!edges_data.is_walls_v[v_idx])
+                        {
+                            edges_data.v[v_idx] += vel_y;
+                        }
+                    }
                 }
             }
 
@@ -2015,7 +1966,8 @@ namespace CodeCuda::FluidSimulation
         }
         void AddVelocityGPU(int x_pos, int y_pos, int radius, float vel_x, float vel_y, cudaStream_t stream)
         {
-            if (x_pos < 0 || x_pos >= edge_w || y_pos < 0 || y_pos >= edge_h || radius <= 0)
+            if (x_pos < 0 || x_pos >= std::max(edges_w_u, edges_w_v) || y_pos < 0 ||
+                y_pos >= std::max(edges_h_u, edges_h_v) || radius <= 0)
             {
                 CODECUDA_PRINTLN("Invalid AddVelocityGPU parameters");
                 return;
@@ -2074,25 +2026,14 @@ namespace CodeCuda::FluidSimulation
         }
 
     private:
-        float GetVFromU(int x, int y, float u, std::vector<float> &v_edges_old)
+        float GetVFromU(int x, int y, std::vector<float> &v_edges_old)
         {
-            float tl_v = v_edges_old[(y + 1) * edge_w + x];
-            float tr_v = v_edges_old[(y + 1) * edge_w + (x + 1)];
-            float bl_v = v_edges_old[y * edge_w + x];
-            float br_v = v_edges_old[y * edge_w + (x + 1)];
-            float v = (tl_v + tr_v + bl_v + br_v) * 0.25f;
-            return v;
+            return SampleEdge(float(x) - 0.5f, float(y) + 0.5f, edges_w_v, edges_h_v, v_edges_old);
         }
 
-        float GetUFromV(int x, int y, float v, std::vector<float> &u_edges_old)
+        float GetUFromV(int x, int y, std::vector<float> &u_edges_old)
         {
-            // int x_1 = std::clamp(x, 0, edge_w - 1);
-            float tl_u = u_edges_old[(y + 1) * edge_w + x];
-            float tr_u = u_edges_old[(y + 1) * edge_w + (x + 1)];
-            float bl_u = u_edges_old[y * edge_w + x];
-            float br_u = u_edges_old[y * edge_w + (x + 1)];
-            float u = (tl_u + tr_u + bl_u + br_u) * 0.25f;
-            return u;
+            return SampleEdge(float(x) + 0.5f, float(y) - 0.5f, edges_w_u, edges_h_u, u_edges_old);
         }
 
         vec4 SampleSmoke(float x, float y, int cells_w, int cells_h, const std::vector<vec4> &smoke_cells)
@@ -2135,30 +2076,30 @@ namespace CodeCuda::FluidSimulation
             std::vector<float> u_edges_old = edges_data.u;
             std::vector<float> v_edges_old = edges_data.v;
             std::vector<vec4> smoke_cells_old = cells_data.smoke;
-            for (int y = 0; y < edge_h; ++y)
+            for (int y = 0; y < edges_h_u; ++y)
             {
-                for (int x = 0; x < edge_w; ++x)
+                for (int x = 0; x < edges_w_u; ++x)
                 {
-                    int i = y * edge_w + x;
+                    int i = y * edges_w_u + x;
                     if (edges_data.is_walls_u[i])
                     {
                         continue;
                     }
 
                     float u = u_edges_old[i];
-                    float v = GetVFromU(x, y, u, v_edges_old);
+                    float v = GetVFromU(x, y, v_edges_old);
                     float pos[2] = {float(x), float(y)};
                     float x_pos = pos[0] - u * params.dt / dx;
                     float y_pos = pos[1] - v * params.dt / dy;
-                    edges_data.u[i] = SampleEdge(x_pos, y_pos, edge_w, edge_h, u_edges_old);
+                    edges_data.u[i] = SampleEdge(x_pos, y_pos, edges_w_u, edges_h_u, u_edges_old);
                 }
             }
 
-            for (int y = 0; y < edge_h; ++y)
+            for (int y = 0; y < edges_h_v; ++y)
             {
-                for (int x = 0; x < edge_w; ++x)
+                for (int x = 0; x < edges_w_v; ++x)
                 {
-                    int i = y * edge_w + x;
+                    int i = y * edges_w_v + x;
                     if (edges_data.is_walls_v[i])
                     {
                         continue;
@@ -2166,12 +2107,12 @@ namespace CodeCuda::FluidSimulation
 
                     float v = v_edges_old[i];
 
-                    float u = GetUFromV(x, y, v, u_edges_old);
+                    float u = GetUFromV(x, y, u_edges_old);
 
                     float pos[2] = {float(x), float(y)};
                     float x_pos = pos[0] - u * params.dt / dx;
                     float y_pos = pos[1] - v * params.dt / dy;
-                    edges_data.v[i] = SampleEdge(x_pos, y_pos, edge_w, edge_h, v_edges_old);
+                    edges_data.v[i] = SampleEdge(x_pos, y_pos, edges_w_v, edges_h_v, v_edges_old);
                 }
             }
             for (int y = 0; y < cells_data.h; ++y)
@@ -2234,36 +2175,40 @@ namespace CodeCuda::FluidSimulation
         void AdvectVelocityGPU(cudaStream_t stream)
         {
 
-            int cell_count = cells_view.w * cells_view.h;
-            int edge_count = edges_view.edges_w * edges_view.edges_h;
-            CODE_API::CW_Memcpy(edges_view.u_input, edges_view.u_output, sizeof(float) * edge_count,
+            const int edge_count_u = edges_view.edges_w_u * edges_view.edges_h_u;
+            const int edge_count_v = edges_view.edges_w_v * edges_view.edges_h_v;
+            CODE_API::CW_Memcpy(edges_view.u_input, edges_view.u_output, sizeof(float) * edge_count_u,
                                 cudaMemcpyDeviceToDevice);
-            CODE_API::CW_Memcpy(edges_view.v_input, edges_view.v_output, sizeof(float) * edge_count,
+            CODE_API::CW_Memcpy(edges_view.v_input, edges_view.v_output, sizeof(float) * edge_count_v,
                                 cudaMemcpyDeviceToDevice);
             dim3 block(1024, 1, 1);
-            dim3 grid((double(edge_w * edge_h) + 1023.0) / 1024.0, 1, 1);
-            CodeSimulationDevice::k_simulation_advection_u<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, dx,
-                                                                                       dy, cells_view, edges_view);
-            CodeSimulationDevice::k_simulation_advection_v<<<grid, block, 0, stream>>>(edge_w * edge_h, params.dt, dx,
-                                                                                       dy, cells_view, edges_view);
+            dim3 grid_u((edge_count_u + block.x - 1) / block.x, 1, 1);
+            dim3 grid_v((edge_count_v + block.x - 1) / block.x, 1, 1);
+            CodeSimulationDevice::k_simulation_advection_u<<<grid_u, block, 0, stream>>>(
+                edge_count_u, params.dt, dx, dy, cells_view, edges_view);
+            CodeSimulationDevice::k_simulation_advection_v<<<grid_v, block, 0, stream>>>(
+                edge_count_v, params.dt, dx, dy, cells_view, edges_view);
         }
         void UpdateVelocityGPU(cudaStream_t stream)
         {
             dim3 block(1024, 1, 1);
-            dim3 grid((double(edge_w * edge_h) + 1023.0) / 1024.0, 1, 1);
+            const int edge_count_u = edges_view.edges_w_u * edges_view.edges_h_u;
+            const int edge_count_v = edges_view.edges_w_v * edges_view.edges_h_v;
+            dim3 grid_u((edge_count_u + block.x - 1) / block.x, 1, 1);
+            dim3 grid_v((edge_count_v + block.x - 1) / block.x, 1, 1);
             float k = params.dt / (params.density * dx);
-            CodeSimulationDevice::k_simulation_update_velocities_u<<<grid, block, 0, stream>>>(
-                edge_w * edge_h, params.dt, k, cells_view, edges_view);
+            CodeSimulationDevice::k_simulation_update_velocities_u<<<grid_u, block, 0, stream>>>(
+                edge_count_u, params.dt, k, cells_view, edges_view);
             k = params.dt / (params.density * dy);
-            CodeSimulationDevice::k_simulation_update_velocities_v<<<grid, block, 0, stream>>>(
-                edge_w * edge_h, params.dt, params.g, k, cells_view, edges_view);
+            CodeSimulationDevice::k_simulation_update_velocities_v<<<grid_v, block, 0, stream>>>(
+                edge_count_v, params.dt, params.g, k, cells_view, edges_view);
         }
         void UpdateVelocity()
         {
             float k = params.dt / (params.density * dx);
-            for (int y = 0; y < edge_h; ++y)
+            for (int y = 0; y < edges_h_u; ++y)
             {
-                for (int x = 0; x < edge_w; ++x)
+                for (int x = 0; x < edges_w_u; ++x)
                 {
                     if (edges_data.GetWallU(x, y))
                     {
@@ -2273,24 +2218,26 @@ namespace CodeCuda::FluidSimulation
 
                     float press_r = cells_data.GetCellPressure(x, y);
                     float press_l = cells_data.GetCellPressure(x - 1, y);
-                    edges_data.u[y * edge_w + x] = edges_data.u[y * edge_w + x] - (k * (press_r - press_l));
-                    edges_data.u[y * edge_w + x] *= 0.99;
+                    edges_data.u[y * edges_w_u + x] =
+                        edges_data.u[y * edges_w_u + x] - (k * (press_r - press_l));
+                    edges_data.u[y * edges_w_u + x] *= 0.99;
                 }
             }
             k = params.dt / (params.density * dy);
-            for (int y = 0; y < edge_h; ++y)
+            for (int y = 0; y < edges_h_v; ++y)
             {
-                for (int x = 0; x < edge_w; ++x)
+                for (int x = 0; x < edges_w_v; ++x)
                 {
                     if (edges_data.GetWallV(x, y))
                     {
-                        // edges_data.v[y * edge_w + x] = 0.0f;
+                        // edges_data.v[y * edges_w_v + x] = 0.0f;
                         continue;
                     }
                     float press_t = cells_data.GetCellPressure(x, y);
                     float press_b = cells_data.GetCellPressure(x, y - 1);
-                    edges_data.v[y * edge_w + x] = edges_data.v[y * edge_w + x] - (k * (press_t - press_b));
-                    edges_data.v[y * edge_w + x] *= 0.99;
+                    edges_data.v[y * edges_w_v + x] =
+                        edges_data.v[y * edges_w_v + x] - (k * (press_t - press_b));
+                    edges_data.v[y * edges_w_v + x] *= 0.99;
                 }
             }
         }
@@ -2382,11 +2329,11 @@ namespace CodeCuda::FluidSimulation
                               int &edge_v_bottom_out)
         {
 
-            edge_u_left_out = y * edge_w + x;
-            edge_u_right_out = y * edge_w + (x + 1);
+            edge_u_left_out = y * edges_w_u + x;
+            edge_u_right_out = y * edges_w_u + (x + 1);
 
-            edge_v_top_out = (y + 1) * edge_w + x;
-            edge_v_bottom_out = y * edge_w + x;
+            edge_v_top_out = (y + 1) * edges_w_v + x;
+            edge_v_bottom_out = y * edges_w_v + x;
         }
 
 
@@ -2455,7 +2402,7 @@ namespace CodeCuda::FluidSimulation
                 validUCount++;
             }
 
-            for (int i = 0; i < edges_data.u.size(); ++i)
+            for (int i = 0; i < edges_data.v.size(); ++i)
             {
                 if (edges_data.is_walls_v[i])
                 {
@@ -2505,8 +2452,10 @@ namespace CodeCuda::FluidSimulation
         bool ready_to_run = false;
         int w = -1;
         int h = -1;
-        int edge_w = -1;
-        int edge_h = -1;
+        int edges_w_u = -1;
+        int edges_h_u = -1;
+        int edges_w_v = -1;
+        int edges_h_v = -1;
         c_cells_view cells_view = {};
         c_edges_view edges_view = {};
         c_cells cells_data = {};
