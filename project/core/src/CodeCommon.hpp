@@ -853,7 +853,6 @@ namespace CodeCuda::FluidSimulation
             uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
             if (idx >= size)
                 return;
-
             int x = idx % edges_view.edges_w_u;
             int y = idx / edges_view.edges_w_u;
 
