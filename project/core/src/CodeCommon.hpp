@@ -722,25 +722,22 @@ namespace CodeCuda::FluidSimulation
             float d = smoke_diffuse_coef;
             if (GetCellSmoke(x - 1, y, cells_data.w, cells_data.h, cells_data.smoke_output).w > 0.5)
             {
-                d = 0.001f;
+                d = 0.0f;
             }
             float a = d * dt;
             float denom = 1 + s * a;
-            if (cells_data.is_walls[idx] == 0)
-            {
-                vec4 l = GetCellSmoke(x - 1, y, cells_data.w, cells_data.h, cells_data.smoke_output) *
-                    GetCellFluidState(x - 1, y, cells_data.w, cells_data.h, cells_data.is_walls);
-                vec4 r = GetCellSmoke(x + 1, y, cells_data.w, cells_data.h, cells_data.smoke_output) *
-                    GetCellFluidState(x + 1, y, cells_data.w, cells_data.h, cells_data.is_walls);
-                vec4 b = GetCellSmoke(x, y - 1, cells_data.w, cells_data.h, cells_data.smoke_output) *
-                    GetCellFluidState(x, y - 1, cells_data.w, cells_data.h, cells_data.is_walls);
-                vec4 t = GetCellSmoke(x, y + 1, cells_data.w, cells_data.h, cells_data.smoke_output) *
-                    GetCellFluidState(x, y + 1, cells_data.w, cells_data.h, cells_data.is_walls);
+            vec4 l = GetCellSmoke(x - 1, y, cells_data.w, cells_data.h, cells_data.smoke_output) *
+                GetCellFluidState(x - 1, y, cells_data.w, cells_data.h, cells_data.is_walls);
+            vec4 r = GetCellSmoke(x + 1, y, cells_data.w, cells_data.h, cells_data.smoke_output) *
+                GetCellFluidState(x + 1, y, cells_data.w, cells_data.h, cells_data.is_walls);
+            vec4 b = GetCellSmoke(x, y - 1, cells_data.w, cells_data.h, cells_data.smoke_output) *
+                GetCellFluidState(x, y - 1, cells_data.w, cells_data.h, cells_data.is_walls);
+            vec4 t = GetCellSmoke(x, y + 1, cells_data.w, cells_data.h, cells_data.smoke_output) *
+                GetCellFluidState(x, y + 1, cells_data.w, cells_data.h, cells_data.is_walls);
 
-                vec4 neightbours_sum = l + r + t + b;
-                vec4 u = (neightbours_sum)*a + cells_data.smoke_output[idx];
-                cells_data.smoke_input[idx] = u / denom;
-            }
+            vec4 neightbours_sum = l + r + t + b;
+            vec4 u = (neightbours_sum)*a + cells_data.smoke_output[idx];
+            cells_data.smoke_input[idx] = u / denom;
         }
         __global__ void k_simulation_projection(int size, float density, float dx, float dt, c_cells_view cells_data,
                                                 c_edges_view edges_view)
@@ -843,7 +840,7 @@ namespace CodeCuda::FluidSimulation
             }
             else
             {
-                edges_view.v_output[idx] = 0.0f;
+                // edges_view.v_output[idx] = 0.0f;
             }
         }
 
@@ -856,17 +853,14 @@ namespace CodeCuda::FluidSimulation
             int x = idx % edges_view.edges_w_u;
             int y = idx / edges_view.edges_w_u;
 
-            if (!edges_view.is_walls_u[idx])
-            {
-                float u = edges_view.u_input[idx];
-                float v = SampleEdge(float(x) - 0.5f, float(y) + 0.5f, edges_view.edges_w_v,
-                                     edges_view.edges_h_v, edges_view.v_input);
-                float pos[2] = {float(x), float(y)};
-                float x_pos = pos[0] - u * dt / dx;
-                float y_pos = pos[1] - v * dt / dy;
-                edges_view.u_output[idx] =
-                    SampleEdge(x_pos, y_pos, edges_view.edges_w_u, edges_view.edges_h_u, edges_view.u_input);
-            }
+            float u = edges_view.u_input[idx];
+            float v = SampleEdge(float(x) - 0.5f, float(y) + 0.5f, edges_view.edges_w_v,
+                                 edges_view.edges_h_v, edges_view.v_input);
+            float pos[2] = {float(x), float(y)};
+            float x_pos = pos[0] - u * dt / dx;
+            float y_pos = pos[1] - v * dt / dy;
+            edges_view.u_output[idx] =
+                SampleEdge(x_pos, y_pos, edges_view.edges_w_u, edges_view.edges_h_u, edges_view.u_input);
         }
         __global__ void k_simulation_advection_v(int size, float dt, float dx, float dy, c_cells_view cells_data,
                                                  c_edges_view edges_view)
@@ -877,17 +871,14 @@ namespace CodeCuda::FluidSimulation
 
             int x = idx % edges_view.edges_w_v;
             int y = idx / edges_view.edges_w_v;
-            if (!edges_view.is_walls_v[idx])
-            {
-                float v = edges_view.v_input[idx];
-                float u = SampleEdge(float(x) + 0.5f, float(y) - 0.5f, edges_view.edges_w_u,
-                                     edges_view.edges_h_u, edges_view.u_input);
-                float pos[2] = {float(x), float(y)};
-                float x_pos = pos[0] - u * dt / dx;
-                float y_pos = pos[1] - v * dt / dy;
-                edges_view.v_output[idx] =
-                    SampleEdge(x_pos, y_pos, edges_view.edges_w_v, edges_view.edges_h_v, edges_view.v_input);
-            }
+            float v = edges_view.v_input[idx];
+            float u = SampleEdge(float(x) + 0.5f, float(y) - 0.5f, edges_view.edges_w_u,
+                                 edges_view.edges_h_u, edges_view.u_input);
+            float pos[2] = {float(x), float(y)};
+            float x_pos = pos[0] - u * dt / dx;
+            float y_pos = pos[1] - v * dt / dy;
+            edges_view.v_output[idx] =
+                SampleEdge(x_pos, y_pos, edges_view.edges_w_v, edges_view.edges_h_v, edges_view.v_input);
         }
         __global__ void k_simulation_advection_smoke(int size, float dt, float dx, float dy,
                                                      float smoke_disipation_factor, c_cells_view cells_data,
@@ -899,11 +890,11 @@ namespace CodeCuda::FluidSimulation
 
             int x = idx % cells_data.w;
             int y = idx / cells_data.w;
-            if (cells_data.is_walls[idx])
-            {
-                cells_data.smoke_output[idx] = {0.0f, 0.0f, 0.0f, 0.0f};
-                return;
-            }
+            // if (cells_data.is_walls[idx])
+            // {
+            //     cells_data.smoke_output[idx] = {0.0f, 0.0f, 0.0f, 0.0f};
+            //     return;
+            // }
             if (x == cells_data.w - 2)
             {
                 cells_data.smoke_output[idx] = {0.0f, 0.0f, 0.0f, 0.0f};
