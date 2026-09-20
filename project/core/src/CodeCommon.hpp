@@ -171,7 +171,14 @@ namespace CODE_API
     }
     inline void CW_MemPrefetchAsync(const void *devPtr, size_t count, int dstDevice, cudaStream_t stream = nullptr)
     {
+#if CUDART_VERSION >= 13000
+        cudaMemLocation location{};
+        location.type = cudaMemLocationTypeDevice;
+        location.id = dstDevice;
+        CUDA_CHECK(cudaMemPrefetchAsync(devPtr, count, location, 0, stream));
+#else
         CUDA_CHECK(cudaMemPrefetchAsync(devPtr, count, dstDevice, stream));
+#endif
     }
     inline void CW_DeviceGetAttribute(int *value, cudaDeviceAttr attr, int device)
     {

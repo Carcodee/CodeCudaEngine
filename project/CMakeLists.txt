@@ -1,14 +1,12 @@
 cmake_minimum_required(VERSION 3.22)
 
-set(CODE_CUDA_TOOLKIT_ROOT "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.8" CACHE PATH "CUDA toolkit used by CodeCudaEngine")
-set(CMAKE_CUDA_COMPILER "${CODE_CUDA_TOOLKIT_ROOT}/bin/nvcc.exe" CACHE FILEPATH "CUDA compiler used by CodeCudaEngine" FORCE)
-set(CUDAToolkit_ROOT "${CODE_CUDA_TOOLKIT_ROOT}" CACHE PATH "CUDA toolkit used by CodeCudaEngine" FORCE)
-set(CMAKE_CUDA_ARCHITECTURES "89-real" CACHE STRING "CUDA architectures used by CodeCudaEngine" FORCE)
-
 project(CodeCudaProject
         VERSION 0.0.1
         LANGUAGES CXX CUDA
 )
+
+# Match consumers that link the distributed library with binary dependencies.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
 #--Global Settings -- 
 
@@ -16,7 +14,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(CMAKE_CUDA_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+set(CMAKE_CUDA_ARCHITECTURES "89-real" CACHE STRING "CUDA architectures used by CodeCudaEngine")
 
 # Position independent code needed for shared libs + Python modules
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

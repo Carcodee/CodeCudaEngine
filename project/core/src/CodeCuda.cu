@@ -111,7 +111,9 @@ namespace CodeCuda
         {
             CODE_API::CW_GetDeviceProperties(&device_prop, current_device);
 
-            if (device_prop.computeMode != cudaComputeModeProhibited)
+            int compute_mode = cudaComputeModeDefault;
+            CODE_API::CW_DeviceGetAttribute(&compute_mode, cudaDevAttrComputeMode, current_device);
+            if (compute_mode != cudaComputeModeProhibited)
             {
                 int ret = memcmp((void *)&device_prop.uuid, vkDeviceUUID, UUID_SIZE);
                 if (ret == 0)

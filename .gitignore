@@ -4,3 +4,7 @@
 *.ptx
 *.cubin
 *.fatbin
+
+# CMake out-of-source builds and install staging
+project/cmake-build-*/
+project/dist/

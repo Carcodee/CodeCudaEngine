@@ -1,10 +1,10 @@
 param(
     [string]$Config = "Debug",
-    [string]$BuildDir = "cmake-build-dist-cuda12",
+    [string]$BuildDir = "cmake-build-dist",
     [Alias("o", "Output")]
     [string]$DistDir = "dist",
     [string]$CudaArchitectures = "89-real",
-    [string]$CudaToolkitRoot = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
+    [string]$CudaToolkitRoot = $env:CUDA_PATH
 )
 
 $ErrorActionPreference = "Stop"
@@ -69,6 +69,14 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BuildPath = Join-Path $ProjectRoot $BuildDir
 $DistPath = Resolve-OutputPath $DistDir
 $script:VcVars64 = Find-VcVars64
+
+if (-not $CudaToolkitRoot) {
+    $cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+    $CudaToolkitRoot = Get-ChildItem -LiteralPath $cudaBase -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName "bin\nvcc.exe") } |
+        Sort-Object { [version]($_.Name -replace '^v', '') } -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
 
 if (-not (Test-Path $CudaToolkitRoot)) {
     throw "CUDA toolkit root not found: $CudaToolkitRoot"

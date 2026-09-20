@@ -132,6 +132,22 @@ cmd.exe /c "call ""C:\Program Files\Microsoft Visual Studio\2022\Professional\VC
 cmake-build-debug\app\lib_test.exe
 ```
 
+## Installable Package
+
+Build and install the library, headers, and relocatable CMake package with:
+
+```powershell
+.\build_dist.ps1
+```
+
+The script uses `CUDA_PATH` when set, otherwise it selects the newest CUDA
+Toolkit installed under NVIDIA's default Windows location. Use `-DistDir` to
+install directly into a consuming project:
+
+```powershell
+.\build_dist.ps1 -DistDir "D:\src\CodeVkEngine\dependencies\CodeCudaEngine"
+```
+
 The benchmark currently runs square GEMM sizes from `128` through `4096`, printing custom-kernel timing, cuBLAS timing, GFLOPS, error, and pass/fail status.
 
 ## Save Benchmark JSON
