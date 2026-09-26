@@ -16,7 +16,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-set(CMAKE_CUDA_ARCHITECTURES "89-real" CACHE STRING "CUDA architectures used by CodeCudaEngine")
+set(CMAKE_CUDA_ARCHITECTURES "all-major" CACHE STRING
+    "CUDA architectures used by CodeCudaEngine (all compiler-supported major architectures plus forward-compatible PTX)")
 
 # Position independent code needed for shared libs + Python modules
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

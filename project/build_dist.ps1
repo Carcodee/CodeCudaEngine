@@ -3,7 +3,7 @@ param(
     [string]$BuildDir = "cmake-build-dist",
     [Alias("o", "Output")]
     [string]$DistDir = "dist",
-    [string]$CudaArchitectures = "89-real",
+    [string]$CudaArchitectures = "all-major",
     [string]$CudaToolkitRoot = $env:CUDA_PATH
 )
 
